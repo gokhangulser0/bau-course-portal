@@ -20,7 +20,7 @@ st.markdown("""
 DB_FILE = "grades_database.xlsx"
 
 # Öğretmen Paneli Şifresi
-INSTRUCTOR_PASSWORD = "S6s2kTa9Rm"
+INSTRUCTOR_PASSWORD = "a123b456c789++"
 
 if not os.path.exists(DB_FILE):
     st.info("No records published yet. Please check back later.")
