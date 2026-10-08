@@ -61,7 +61,7 @@ st.markdown("""
 # Dosya Yolları ve Şifre
 DB_FILE = "grades_database.xlsx"
 HW_FILE = "MCH2008_homework.xlsx"
-INSTRUCTOR_PASSWORD = "bau_instructor_2026"
+INSTRUCTOR_PASSWORD = "a123b456c789++"
 
 # --- Veri Yükleme Fonksiyonları ---
 @st.cache_data(ttl=10)
@@ -100,7 +100,7 @@ if portal_mode == "Student View":
     st.title("🎓 Student Academic Portal")
     st.write("Enter your **Student ID** to view attendance records, quiz results, homework grades, and weighted course averages.")
 
-    student_id_input = st.text_input("Student ID:", placeholder="e.g. 2003743").strip()
+    student_id_input = st.text_input("Student ID:", placeholder="e.g. 1111111").strip()
 
     if student_id_input:
         # Öğrencinin adını ve kayıtlı derslerini her iki kaynaktan birleştir
