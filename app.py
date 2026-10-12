@@ -103,7 +103,6 @@ if portal_mode == "Student View":
     student_id_input = st.text_input("Student ID:", placeholder="e.g. 1111111").strip()
 
     if student_id_input:
-        # Öğrencinin adını ve kayıtlı derslerini her iki kaynaktan birleştir
         student_name = None
         enrolled_courses = []
 
@@ -140,29 +139,42 @@ if portal_mode == "Student View":
                     if not st_hw.empty:
                         for col in hw_cols:
                             if col in st_hw.columns and pd.notna(st_hw.iloc[0][col]):
-                                hw_scores[col] = float(st_hw.iloc[0][col])
+                                val_raw = str(st_hw.iloc[0][col]).strip()
+                                if val_raw != "" and val_raw.lower() != "pending":
+                                    try:
+                                        hw_scores[col] = float(val_raw)
+                                    except ValueError:
+                                        hw_scores[col] = None
+                                else:
+                                    hw_scores[col] = None
                             else:
                                 hw_scores[col] = None
 
-                # Her girilen ödev: Not * 0.04 puan kazandırır (Maks 4.00 puan)
+                # 1. Ödev Katkısı ve Tabanı (Girilen her ödev %4 ekler)
                 valid_hws = {k: v for k, v in hw_scores.items() if v is not None}
-                hw_earned = sum(v * 0.04 for v in valid_hws.values())
                 hw_count = len(valid_hws)
+                hw_earned = sum(v * 0.04 for v in valid_hws.values())  # Not * 0.04
+                hw_base = hw_count * 4.0                               # Değerlendirilen ödev tabanı (örn: 0 ödev = 0.0)
 
-                # Quizler: En yüksek 7 tanesinin ortalaması * 0.20
+                # 2. Quiz Katkısı ve Tabanı (En yüksek 7 quiz)
                 quiz_scores = []
                 if not df_db.empty:
                     mch08_db = df_db[(df_db["student_id"] == student_id_input) & (df_db["course_code"] == "MCH2008")]
                     quiz_scores = mch08_db["quiz_score_num"].dropna().tolist()
 
                 quiz_avg = None
-                quiz_weight = 0.0
+                quiz_earned = 0.0
+                quiz_base = 0.0
+
                 if quiz_scores:
                     sorted_q = sorted(quiz_scores, reverse=True)[:7]
                     quiz_avg = sum(sorted_q) / len(sorted_q)
-                    quiz_weight = quiz_avg * 0.20
+                    quiz_earned = quiz_avg * 0.20  # %20 üzerinden
+                    quiz_base = 20.00              # Quiz yapıldığı an taban 20.00 olur
 
-                total_earned = hw_earned + quiz_weight
+                # 3. Aktif Taban ve Kazanılan Toplam Puan
+                total_earned = hw_earned + quiz_earned
+                active_base = hw_base + quiz_base
 
                 st.markdown("#### 📊 Course Performance & Standing")
                 o1, o2, o3 = st.columns(3)
@@ -177,10 +189,15 @@ if portal_mode == "Student View":
                     st.metric(
                         label="Best 7 Quizzes Avg (%20)", 
                         value=q_str, 
-                        delta=f"+{quiz_weight:.2f} pts earned" if quiz_avg is not None else None
+                        delta=f"+{quiz_earned:.2f} pts earned" if quiz_avg is not None else None
                     )
                 with o3:
-                    st.metric(label="Current Standing (%40 Base)", value=f"{total_earned:.2f} / 40.00 pts")
+                    # Sadece değerlendirilmiş bileşenlerin toplamını taban alır
+                    base_str = f"{active_base:.2f}" if active_base > 0 else "0.00"
+                    st.metric(
+                        label=f"Current Standing (%{int(active_base)} Active Base)", 
+                        value=f"{total_earned:.2f} / {base_str} pts"
+                    )
 
                 st.markdown("##### 📝 Homework Breakdown")
                 cols = st.columns(5)
@@ -312,13 +329,12 @@ else:
             quiz_scores = week_data["quiz_score_num"].dropna()
             q_count = len(quiz_scores)
             q_mean = quiz_scores.mean() if q_count > 0 else 0
-            q_std = quiz_scores.std() if q_count > 1 else 0
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Enrolled Students", total_st)
             m2.metric("Attendance", f"{att_count} ({att_rate:.1f}%)")
             m3.metric("Quizzes Evaluated", q_count)
-            m4.metric("Class Average", f"{quiz_mean:.2f} / 100" if q_count > 0 else "N/A")
+            m4.metric("Class Average", f"{q_mean:.2f} / 100" if q_count > 0 else "N/A")
 
             st.divider()
 
