@@ -150,13 +150,12 @@ if portal_mode == "Student View":
                             else:
                                 hw_scores[col] = None
 
-                # 1. Ödev Katkısı ve Tabanı (Girilen her ödev %4 ekler)
+                # 1. Ödev Katkısı (5 ödev var, her biri %4 ağırlıkta)
                 valid_hws = {k: v for k, v in hw_scores.items() if v is not None}
                 hw_count = len(valid_hws)
                 hw_earned = sum(v * 0.04 for v in valid_hws.values())  # Not * 0.04
-                hw_base = hw_count * 4.0                               # Değerlendirilen ödev tabanı (örn: 0 ödev = 0.0)
 
-                # 2. Quiz Katkısı ve Tabanı (En yüksek 7 quiz)
+                # 2. Quiz Katkısı (En yüksek 7 quiz alınır, her quiz 20/7 ≈ 2.857 puan kazandırır)
                 quiz_scores = []
                 if not df_db.empty:
                     mch08_db = df_db[(df_db["student_id"] == student_id_input) & (df_db["course_code"] == "MCH2008")]
@@ -164,17 +163,17 @@ if portal_mode == "Student View":
 
                 quiz_avg = None
                 quiz_earned = 0.0
-                quiz_base = 0.0
 
                 if quiz_scores:
+                    # En yüksek 7 quizi al
                     sorted_q = sorted(quiz_scores, reverse=True)[:7]
                     quiz_avg = sum(sorted_q) / len(sorted_q)
-                    quiz_earned = quiz_avg * 0.20  # %20 üzerinden
-                    quiz_base = 20.00              # Quiz yapıldığı an taban 20.00 olur
+                    
+                    # Her quiz notunun 20/7 puanlık katkısı hesaplanır
+                    quiz_earned = sum(q * (0.20 / 7.0) for q in sorted_q)
 
-                # 3. Aktif Taban ve Kazanılan Toplam Puan
+                # 3. Toplam Kazanılan Puan (Ödevler %20 + Quizler %20 = Toplam %40)
                 total_earned = hw_earned + quiz_earned
-                active_base = hw_base + quiz_base
 
                 st.markdown("#### 📊 Course Performance & Standing")
                 o1, o2, o3 = st.columns(3)
@@ -189,14 +188,12 @@ if portal_mode == "Student View":
                     st.metric(
                         label="Best 7 Quizzes Avg (%20)", 
                         value=q_str, 
-                        delta=f"+{quiz_earned:.2f} pts earned" if quiz_avg is not None else None
+                        delta=f"+{quiz_earned:.2f} / 20.00 pts earned" if quiz_avg is not None else None
                     )
                 with o3:
-                    # Sadece değerlendirilmiş bileşenlerin toplamını taban alır
-                    base_str = f"{active_base:.2f}" if active_base > 0 else "0.00"
                     st.metric(
-                        label=f"Current Standing (%{int(active_base)} Active Base)", 
-                        value=f"{total_earned:.2f} / {base_str} pts"
+                        label="Current Standing (%40 Base)", 
+                        value=f"{total_earned:.2f} / 40.00 pts"
                     )
 
                 st.markdown("##### 📝 Homework Breakdown")
