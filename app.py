@@ -63,11 +63,11 @@ DB_FILE = "grades_database.xlsx"
 HW_FILE = "MCH2008_homework.xlsx"
 INSTRUCTOR_PASSWORD = "a123b456c789++"
 
-# --- Öğrenci Numarası Temizleme Yardımcısı ---
+# --- Yardımcı Fonksiyonlar ---
 def clean_id_str(val):
     if pd.isna(val) or val is None:
         return ""
-    # Excel float (.0) ve gereksiz karakterleri temizler
+    # Excel float (.0), boşluk ve rakam dışı karakterleri temizler
     s = str(val).split('.')[0].strip()
     return ''.join(filter(str.isdigit, s))
 
@@ -76,8 +76,42 @@ def clean_id_str(val):
 def get_database():
     if os.path.exists(DB_FILE):
         df = pd.read_excel(DB_FILE)
-        df["quiz_score_num"] = pd.to_numeric(df["quiz_score"], errors="coerce")
-        df["student_id"] = df["student_id"].apply(clean_id_str)
+        
+        # Sütun isimlerini sanitize etme (boşluklar, büyük/küçük harf uyumsuzlukları)
+        raw_cols = [str(c).strip() for c in df.columns]
+        rename_map = {}
+        for c in raw_cols:
+            c_clean = c.lower().replace(" ", "_")
+            if "course" in c_clean or "ders" in c_clean:
+                rename_map[c] = "course_code"
+            elif "student" in c_clean or "ogrenci" in c_clean or "öğrenci" in c_clean:
+                rename_map[c] = "student_id"
+            elif "full" in c_clean or "name" in c_clean or "isim" in c_clean or "ad" in c_clean:
+                rename_map[c] = "full_name"
+            elif "sec" in c_clean or "şube" in c_clean:
+                rename_map[c] = "section"
+            elif "week" in c_clean or "hafta" in c_clean:
+                rename_map[c] = "week"
+            elif "att" in c_clean or "yoklama" in c_clean:
+                rename_map[c] = "attendance"
+            elif "quiz_no" in c_clean or "quiz_num" in c_clean or "quiz_no" in c:
+                rename_map[c] = "quiz_no"
+            elif "score" in c_clean or "not" in c_clean or "puan" in c_clean:
+                rename_map[c] = "quiz_score"
+            elif "feed" in c_clean or "geribildirim" in c_clean or "yorum" in c_clean:
+                rename_map[c] = "feedback"
+                
+        if rename_map:
+            df = df.rename(columns=rename_map)
+
+        # Öğrenci numarasını temizle ve sayısal quiz notu sütununu ekle
+        if "student_id" in df.columns:
+            df["student_id"] = df["student_id"].apply(clean_id_str)
+        if "quiz_score" in df.columns:
+            df["quiz_score_num"] = pd.to_numeric(df["quiz_score"], errors="coerce")
+        else:
+            df["quiz_score_num"] = np.nan
+            
         return df
     return pd.DataFrame()
 
@@ -90,7 +124,17 @@ def get_homework():
         else:
             dfs = [pd.read_excel(HW_FILE, sheet_name=s) for s in xl.sheet_names]
             df_hw = pd.concat(dfs, ignore_index=True)
-        df_hw["Student ID"] = df_hw["Student ID"].apply(clean_id_str)
+            
+        # Sütun isimlerini kontrol et ve temizle
+        for col in df_hw.columns:
+            c_lower = str(col).lower()
+            if "student" in c_lower or "id" in c_lower:
+                df_hw = df_hw.rename(columns={col: "Student ID"})
+            elif "name" in c_lower or "ad" in c_lower:
+                df_hw = df_hw.rename(columns={col: "Full Name"})
+                
+        if "Student ID" in df_hw.columns:
+            df_hw["Student ID"] = df_hw["Student ID"].apply(clean_id_str)
         return df_hw
     return pd.DataFrame()
 
@@ -115,16 +159,18 @@ if portal_mode == "Student View":
         student_name = None
         enrolled_courses = []
 
-        if not df_db.empty:
+        if not df_db.empty and "student_id" in df_db.columns:
             match_db = df_db[df_db["student_id"] == student_id_input]
             if not match_db.empty:
-                student_name = match_db.iloc[0]["full_name"]
-                enrolled_courses.extend(match_db["course_code"].dropna().unique().tolist())
+                if "full_name" in match_db.columns:
+                    student_name = match_db.iloc[0]["full_name"]
+                if "course_code" in match_db.columns:
+                    enrolled_courses.extend(match_db["course_code"].dropna().unique().tolist())
 
-        if not df_hw.empty:
+        if not df_hw.empty and "Student ID" in df_hw.columns:
             match_hw = df_hw[df_hw["Student ID"] == student_id_input]
             if not match_hw.empty:
-                if not student_name:
+                if not student_name and "Full Name" in match_hw.columns:
                     student_name = match_hw.iloc[0]["Full Name"]
                 if "MCH2008" not in enrolled_courses:
                     enrolled_courses.append("MCH2008")
@@ -132,7 +178,7 @@ if portal_mode == "Student View":
         if not enrolled_courses:
             st.error("No record found matching this Student ID. Please ensure your ID is entered correctly.")
         else:
-            st.success(f"Welcome, **{student_name}**!")
+            st.success(f"Welcome, **{student_name if student_name else 'Student'}**!")
             selected_course = st.selectbox("Select Enrolled Course:", enrolled_courses)
 
             st.markdown(f"### Academic Status: `{selected_course}`")
@@ -143,7 +189,7 @@ if portal_mode == "Student View":
                 hw_cols = ["HW #1", "HW #2", "HW #3", "HW #4", "HW #5"]
                 hw_scores = {}
 
-                if not df_hw.empty:
+                if not df_hw.empty and "Student ID" in df_hw.columns:
                     st_hw = df_hw[df_hw["Student ID"] == student_id_input]
                     if not st_hw.empty:
                         for col in hw_cols:
@@ -162,26 +208,23 @@ if portal_mode == "Student View":
                 # 1. Ödev Katkısı (5 ödev var, her biri %4 ağırlıkta)
                 valid_hws = {k: v for k, v in hw_scores.items() if v is not None}
                 hw_count = len(valid_hws)
-                hw_earned = sum(v * 0.04 for v in valid_hws.values())  # Not * 0.04
+                hw_earned = sum(v * 0.04 for v in valid_hws.values())
 
                 # 2. Quiz Katkısı (En yüksek 7 quiz alınır, her quiz 20/7 ≈ 2.857 puan kazandırır)
                 quiz_scores = []
-                if not df_db.empty:
+                if not df_db.empty and "student_id" in df_db.columns and "course_code" in df_db.columns:
                     mch08_db = df_db[(df_db["student_id"] == student_id_input) & (df_db["course_code"] == "MCH2008")]
-                    quiz_scores = mch08_db["quiz_score_num"].dropna().tolist()
+                    if "quiz_score_num" in mch08_db.columns:
+                        quiz_scores = mch08_db["quiz_score_num"].dropna().tolist()
 
                 quiz_avg = None
                 quiz_earned = 0.0
 
                 if quiz_scores:
-                    # En yüksek 7 quizi al
                     sorted_q = sorted(quiz_scores, reverse=True)[:7]
                     quiz_avg = sum(sorted_q) / len(sorted_q)
-                    
-                    # Her quiz notunun 20/7 puanlık katkısı hesaplanır
                     quiz_earned = sum(q * (0.20 / 7.0) for q in sorted_q)
 
-                # 3. Toplam Kazanılan Puan (Ödevler %20 + Quizler %20 = Toplam %40)
                 total_earned = hw_earned + quiz_earned
 
                 st.markdown("#### 📊 Course Performance & Standing")
@@ -223,18 +266,18 @@ if portal_mode == "Student View":
             st.markdown("#### 🗓️ Weekly Attendance & Quiz Log")
             
             course_logs = pd.DataFrame()
-            if not df_db.empty:
+            if not df_db.empty and "student_id" in df_db.columns and "course_code" in df_db.columns:
                 course_logs = df_db[(df_db["student_id"] == student_id_input) & (df_db["course_code"] == selected_course)]
 
             if course_logs.empty:
                 st.info(f"No weekly attendance or quiz records published for `{selected_course}` yet.")
             else:
                 for _, row in course_logs.iterrows():
-                    week = row["week"]
-                    att = str(row["attendance"]).strip()
-                    q_label = str(row["quiz_no"]).strip()
-                    score = row["quiz_score"]
-                    feedback = row["feedback"]
+                    week = row.get("week", "N/A")
+                    att = str(row.get("attendance", "")).strip()
+                    q_label = str(row.get("quiz_no", "")).strip()
+                    score = row.get("quiz_score", np.nan)
+                    feedback = row.get("feedback", "")
 
                     has_quiz = (q_label != "No Quiz") and pd.notna(score) and (str(score).strip() != "")
 
@@ -253,11 +296,16 @@ if portal_mode == "Student View":
 
                         with col2:
                             if has_quiz:
-                                st.metric(label=f"Your {q_label} Score", value=f"{int(float(score))} / 100")
+                                try:
+                                    st.metric(label=f"Your {q_label} Score", value=f"{int(float(score))} / 100")
+                                except ValueError:
+                                    st.metric(label=f"Your {q_label} Score", value=f"{score} / 100")
+                                    
                                 week_all = df_db[(df_db["course_code"] == selected_course) & (df_db["week"] == week)]
-                                q_scores_all = week_all["quiz_score_num"].dropna()
-                                if not q_scores_all.empty:
-                                    st.caption(f"Class Average: **{q_scores_all.mean():.1f} / 100**")
+                                if "quiz_score_num" in week_all.columns:
+                                    q_scores_all = week_all["quiz_score_num"].dropna()
+                                    if not q_scores_all.empty:
+                                        st.caption(f"Class Average: **{q_scores_all.mean():.1f} / 100**")
                             else:
                                 st.caption("Quiz Score: N/A")
 
@@ -290,7 +338,7 @@ else:
             st.rerun()
 
         all_courses = set()
-        if not df_db.empty:
+        if not df_db.empty and "course_code" in df_db.columns:
             all_courses.update(df_db["course_code"].dropna().unique().tolist())
         if not df_hw.empty:
             all_courses.add("MCH2008")
@@ -316,25 +364,28 @@ else:
 
         # Haftalık Veritabanı İstatistikleri
         course_db = pd.DataFrame()
-        if not df_db.empty:
+        if not df_db.empty and "course_code" in df_db.columns:
             course_db = df_db[df_db["course_code"] == sel_course]
 
         if course_db.empty:
             st.info(f"No weekly records uploaded for `{sel_course}` yet.")
         else:
-            weeks_avail = course_db["week"].dropna().unique().tolist()
+            weeks_avail = course_db["week"].dropna().unique().tolist() if "week" in course_db.columns else []
             sel_week = st.selectbox("Select Academic Week:", weeks_avail)
             week_data = course_db[course_db["week"] == sel_week].copy()
 
             st.subheader(f"📊 Analytics Summary: {sel_course} - {sel_week}")
 
             total_st = len(week_data)
-            att_count = len(week_data[week_data["attendance"] == "+"])
+            att_count = len(week_data[week_data["attendance"] == "+"]) if "attendance" in week_data.columns else 0
             att_rate = (att_count / total_st * 100) if total_st > 0 else 0
 
-            quiz_scores = week_data["quiz_score_num"].dropna()
-            q_count = len(quiz_scores)
-            q_mean = quiz_scores.mean() if q_count > 0 else 0
+            q_count = 0
+            q_mean = 0.0
+            if "quiz_score_num" in week_data.columns:
+                quiz_scores = week_data["quiz_score_num"].dropna()
+                q_count = len(quiz_scores)
+                q_mean = quiz_scores.mean() if q_count > 0 else 0.0
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Enrolled Students", total_st)
@@ -345,5 +396,5 @@ else:
             st.divider()
 
             st.markdown("#### 📋 Detailed Student Roster")
-            cols_show = ["student_id", "full_name", "section", "attendance", "quiz_no", "quiz_score", "feedback"]
+            cols_show = [c for c in ["student_id", "full_name", "section", "attendance", "quiz_no", "quiz_score", "feedback"] if c in week_data.columns]
             st.dataframe(week_data[cols_show], use_container_width=True)
