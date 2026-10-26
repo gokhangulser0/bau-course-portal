@@ -63,13 +63,21 @@ DB_FILE = "grades_database.xlsx"
 HW_FILE = "MCH2008_homework.xlsx"
 INSTRUCTOR_PASSWORD = "a123b456c789++"
 
+# --- Öğrenci Numarası Temizleme Yardımcısı ---
+def clean_id_str(val):
+    if pd.isna(val) or val is None:
+        return ""
+    # Excel float (.0) ve gereksiz karakterleri temizler
+    s = str(val).split('.')[0].strip()
+    return ''.join(filter(str.isdigit, s))
+
 # --- Veri Yükleme Fonksiyonları ---
 @st.cache_data(ttl=10)
 def get_database():
     if os.path.exists(DB_FILE):
         df = pd.read_excel(DB_FILE)
         df["quiz_score_num"] = pd.to_numeric(df["quiz_score"], errors="coerce")
-        df["student_id"] = df["student_id"].astype(str).str.strip()
+        df["student_id"] = df["student_id"].apply(clean_id_str)
         return df
     return pd.DataFrame()
 
@@ -82,7 +90,7 @@ def get_homework():
         else:
             dfs = [pd.read_excel(HW_FILE, sheet_name=s) for s in xl.sheet_names]
             df_hw = pd.concat(dfs, ignore_index=True)
-        df_hw["Student ID"] = df_hw["Student ID"].astype(str).str.strip()
+        df_hw["Student ID"] = df_hw["Student ID"].apply(clean_id_str)
         return df_hw
     return pd.DataFrame()
 
@@ -100,7 +108,8 @@ if portal_mode == "Student View":
     st.title("🎓 Student Academic Portal")
     st.write("Enter your **Student ID** to view attendance records, quiz results, homework grades, and weighted course averages.")
 
-    student_id_input = st.text_input("Student ID:", placeholder="e.g. 1111111").strip()
+    raw_input = st.text_input("Student ID:", placeholder="e.g. 1111111")
+    student_id_input = clean_id_str(raw_input)
 
     if student_id_input:
         student_name = None
@@ -276,65 +285,4 @@ else:
             else:
                 st.error("Invalid password. Access denied.")
     else:
-        if st.sidebar.button("Logout"):
-            st.session_state.instructor_auth = False
-            st.rerun()
-
-        all_courses = set()
-        if not df_db.empty:
-            all_courses.update(df_db["course_code"].dropna().unique().tolist())
-        if not df_hw.empty:
-            all_courses.add("MCH2008")
-
-        sel_course = st.selectbox("Select Course to Analyze:", sorted(list(all_courses)))
-
-        # MCH2008 Seçildiyse Ödev İstatistikleri
-        if sel_course == "MCH2008" and not df_hw.empty:
-            st.subheader("📚 MCH2008 Homework Overview")
-            hw_summary = []
-            for h in ["HW #1", "HW #2", "HW #3", "HW #4", "HW #5"]:
-                if h in df_hw.columns:
-                    valid_vals = pd.to_numeric(df_hw[h], errors="coerce").dropna()
-                    hw_summary.append({
-                        "Homework": h,
-                        "Submitted Count": len(valid_vals),
-                        "Average Score": f"{valid_vals.mean():.1f}" if not valid_vals.empty else "N/A",
-                        "Highest Score": f"{valid_vals.max():.0f}" if not valid_vals.empty else "N/A"
-                    })
-            if hw_summary:
-                st.dataframe(pd.DataFrame(hw_summary), use_container_width=True)
-            st.divider()
-
-        # Haftalık Veritabanı İstatistikleri
-        course_db = pd.DataFrame()
-        if not df_db.empty:
-            course_db = df_db[df_db["course_code"] == sel_course]
-
-        if course_db.empty:
-            st.info(f"No weekly records uploaded for `{sel_course}` yet.")
-        else:
-            weeks_avail = course_db["week"].dropna().unique().tolist()
-            sel_week = st.selectbox("Select Academic Week:", weeks_avail)
-            week_data = course_db[course_db["week"] == sel_week].copy()
-
-            st.subheader(f"📊 Analytics Summary: {sel_course} - {sel_week}")
-
-            total_st = len(week_data)
-            att_count = len(week_data[week_data["attendance"] == "+"])
-            att_rate = (att_count / total_st * 100) if total_st > 0 else 0
-
-            quiz_scores = week_data["quiz_score_num"].dropna()
-            q_count = len(quiz_scores)
-            q_mean = quiz_scores.mean() if q_count > 0 else 0
-
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Enrolled Students", total_st)
-            m2.metric("Attendance", f"{att_count} ({att_rate:.1f}%)")
-            m3.metric("Quizzes Evaluated", q_count)
-            m4.metric("Class Average", f"{q_mean:.2f} / 100" if q_count > 0 else "N/A")
-
-            st.divider()
-
-            st.markdown("#### 📋 Detailed Student Roster")
-            cols_show = ["student_id", "full_name", "section", "attendance", "quiz_no", "quiz_score", "feedback"]
-            st.dataframe(week_data[cols_show], use_container_width=True)
+        if st.sidebar.
