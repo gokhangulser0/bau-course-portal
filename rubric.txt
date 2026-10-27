@@ -1,141 +1,146 @@
 ==================================================================
-GRADING RUBRIC - MCH 2008 ENGINEERING MECHANICS QUIZ
-Problem 3/17: Force P Required to Break Contact at C
+Problem 3-83: Pumped-Storage Revenue (Pump-Turbine System)
 TOTAL: 100 POINTS
 ==================================================================
 
 1. REFERENCE SOLUTION (FOR THE GRADER)
 ------------------------------------------------------------------
-Given: The T-shaped body (m = 0.05 kg) is pinned at O. Take O as
-the origin, x to the right, y up. Then:
-  A = (-120, 0) mm   (P acts downward at A)
-  B = (-60, -40) mm  (spring attached here, pulling left)
-  C = (-60, -80) mm  (contact with the support on the left)
-The center of gravity lies on the stem axis, 60 mm to the left
-of O (by symmetry of the T).
+Given: Height h = 40 m, volume flow rate = 2 m^3/s in either
+direction, pump-motor efficiency = 75%, turbine-generator
+efficiency = 75%, 10 h/day in each mode, 365 days/year.
+Electricity price: $0.05/kWh (buying at night), $0.12/kWh
+(selling during the day). Frictional losses in piping are
+neglected.
 
-Spring force:
-  F_s = k * x = 1750 N/m * 0.010 m = 17.5 N, pulling B to the
-  left (the spring is stretched). Its moment about O is clockwise.
-  Moment arm = 40 mm (vertical distance from O to B).
+Step 1 - Mass flow rate:
+  m_dot = rho * V_dot = (1000 kg/m^3)(2 m^3/s) = 2000 kg/s
 
-Weight:
-  W = m*g = 0.05 * 9.81 = 0.4905 N, downward, arm = 60 mm.
-  Its moment about O is counterclockwise.
+Step 2 - Ideal (reversible) power for lifting/dropping the water:
+  W_ideal = m_dot * g * h = (2000)(9.81)(40) = 784,800 W
+          = 784.8 kW
 
-At the instant contact breaks, the contact force at C is zero.
-So only P, W, the spring force and the pin reaction at O act on
-the body. Taking moments about O eliminates the pin reaction.
+Step 3 - Pump mode (night, electricity is bought):
+  Electric power input = W_ideal / eta_pump
+                       = 784.8 / 0.75 = 1046.4 kW
+  Energy per day  = 1046.4 kW * 10 h = 10,464 kWh
+  Cost per day    = 10,464 * 0.05 = $523.2
+  Cost per year   = 523.2 * 365 = approx. $190,970
 
-(b) Neglecting weight (counterclockwise positive):
-  Sum M_O = 0:   P(120) - 17.5(40) = 0
-                 P(120) = 700 N*mm
-                 P = 5.83 N
+Step 4 - Turbine mode (day, electricity is sold):
+  Electric power output = W_ideal * eta_turbine
+                        = 784.8 * 0.75 = 588.6 kW
+  Energy per day  = 588.6 kW * 10 h = 5,886 kWh
+  Revenue per day = 5,886 * 0.12 = $706.3
+  Revenue per year = 706.3 * 365 = approx. $257,800
 
-(a) Including weight:
-  Sum M_O = 0:   P(120) + W(60) - 17.5(40) = 0
-                 P(120) + 0.4905(60) - 700 = 0
-                 P(120) = 700 - 29.43 = 670.57
-                 P = 5.59 N
+Step 5 - Net annual revenue:
+  Net = 257,800 - 190,970 = approx. $66,800 per year
 
-Final answers:
-  (a) P = 5.59 N (including weight)
-  (b) P = 5.83 N (neglecting weight)
+Final answer:
+  Pump input = 1046 kW, turbine output = 589 kW,
+  net potential revenue = approx. $66,800 per year.
 
 
 2. POINT DISTRIBUTION
 ------------------------------------------------------------------
-PART A - FREE-BODY DIAGRAM AND SETUP (25 points)
-  A1. FBD showing P, spring force, weight (for part a), pin
-      reaction at O (and recognition that contact at C is
-      lost) ............................................... 8
-  A2. Spring force computed correctly:
-      F_s = k*x = 1750(0.010) = 17.5 N, directed to the
-      left ................................................ 9
-  A3. Recognizes that the contact force at C is zero at the
-      moment contact breaks ............................... 8
+PART A - SETUP AND CONCEPT (20 points)
+  A1. Recognizes that the ideal power is m_dot*g*h (energy
+      balance / potential energy of the water, frictionless
+      piping) ............................................. 8
+  A2. Mass flow rate computed correctly:
+      m_dot = rho*V_dot = 2000 kg/s ....................... 6
+  A3. Applies the efficiencies in the correct sense: pump needs
+      MORE electric input (divide by eta), turbine gives LESS
+      output (multiply by eta) ............................ 6
 
-PART B - SOLUTION (a): INCLUDING WEIGHT (35 points)
-  B1. Moment equation about O written with correct arms
-      (120 mm for P, 40 mm for the spring, 60 mm for W)
-      and correct signs (P and W opposite to the spring
-      moment) ............................................. 12
-  B2. Weight computed correctly (W = approx. 0.49 N) and
-      placed at 60 mm from O ............................... 10
-  B3. P = approx. 5.59 N ................................... 13
+PART B - PUMP MODE / COST (25 points)
+  B1. Ideal power W = approx. 784.8 kW ..................... 8
+  B2. Electric input power = approx. 1046 kW ............... 10
+  B3. Annual pumping cost = approx. $191,000
+      (10 h/day, 365 days, $0.05/kWh) ..................... 7
 
-PART C - SOLUTION (b): NEGLECTING WEIGHT (30 points)
-  C1. Moment equation about O written correctly
-      (P(120) = 17.5(40)) ................................. 10
-  C2. P = approx. 5.83 N ................................... 20
+PART C - TURBINE MODE / REVENUE (25 points)
+  C1. Electric output power = approx. 589 kW ............... 12
+  C2. Annual turbine revenue = approx. $257,800
+      (10 h/day, 365 days, $0.12/kWh) ..................... 13
 
-PART D - FINAL ANSWER (10 points)
-  D1. Clear final statement of both answers (a) and (b)
-      with units (N) ...................................... 10
+PART D - NET REVENUE AND FINAL ANSWER (30 points)
+  D1. Net annual revenue = revenue - cost
+      = approx. $66,800 per year .......................... 20
+  D2. Clear final statement of the answer with units
+      ($/year) ............................................. 10
 
 TOTAL .................................................... 100
 
 
-3. GRADING POLICY (LENIENT - THIS IS A QUIZ)
+3. GRADING POLICY (LENIENT - THIS IS A QUIZ, LONG PROBLEM)
 ------------------------------------------------------------------
 1.  Error carried forward (ECF): If an early mistake is
     propagated consistently, do NOT penalize it again in later
     parts. Give full credit for later steps that are correct
     given the student's earlier values.
 
-2.  Tolerance: Accept answers within +/-3% of the reference
-    values (e.g., (a) P = 5.42-5.76 N, (b) P = 5.66-6.00 N).
+2.  Tolerance: Accept answers within +/-5% of the reference
+    values (e.g., net revenue = $63,500-$70,200 per year,
+    pump input = 994-1099 kW, turbine output = 559-618 kW).
+    Because the net revenue is a difference of two large
+    numbers, small rounding differences can shift it noticeably;
+    do not penalize rounding.
 
-3.  Value of g: g = 9.81, 9.8, or 10 m/s^2 are all acceptable.
-    Do not penalize the small differences this causes in
-    part (a).
+3.  Values of g and rho: g = 9.81, 9.8, or 10 m/s^2 and
+    rho = 1000 or 997 kg/m^3 are all acceptable. Do not penalize
+    the differences these cause in the final numbers.
 
-4.  Unit slips: Mixing mm and m, or N and kN, costs at most
-    3 points in total, as long as the numerical work is
-    consistent. (A common slip is using x = 10 instead of
-    0.010 m in F_s = k*x without converting units; treat it as
-    a unit slip if the rest of the method is correct.)
+4.  Unit slips: Mixing W and kW, kWh and Wh, or MW and kW costs
+    at most 4 points in total, as long as the numerical work is
+    consistent.
 
-5.  Sign / direction convention: If the student clearly states a
-    different but reasonable sign convention (e.g., clockwise
-    positive), grade against the student's own convention. Do
-    not deduct more than 3 points in total for sign errors alone.
+5.  Efficiency applied in the wrong sense: If the student
+    multiplies by 0.75 for the pump (instead of dividing), or
+    divides for the turbine, deduct A3 only and apply ECF to the
+    later numbers. Give full credit for B2/C1 if they are
+    consistent with the student's own (wrong) treatment.
 
-6.  Alternative methods: Taking moments about another point
-    (for example C) is acceptable as long as the pin reaction
-    at O is handled correctly. Using force equations in
-    addition to moments is also acceptable.
+6.  Efficiency used only once or not used: Deduct A3 only and
+    apply ECF to the later numbers.
 
-7.  Minor arithmetic errors: A single arithmetic slip with
+7.  Gross revenue reported as the final answer: If the student
+    correctly finds the turbine revenue (approx. $257,800) but
+    never computes the pumping cost, give full credit for
+    Parts A and C, and award 8 of the 20 points for D1. If the
+    student computes both but does not subtract them, award
+    14 of the 20 points for D1.
+
+8.  Days per year: Using 360 or 365 days is acceptable. If the
+    student only gives the DAILY net ($183) and does not convert
+    to a year, award 12 of the 20 points for D1.
+
+9.  Alternative methods: Computing energy directly (e.g., energy
+    per day instead of power first) or working in different
+    units is fully acceptable if the result is consistent.
+
+10. Minor arithmetic errors: A single arithmetic slip with
     correct method loses at most half of that line's points.
 
-8.  Correct method, wrong or missing number: Award at least 50%
+11. Correct method, wrong or missing number: Award at least 50%
     of that line's points.
 
-9.  Missing weight in part (a): If the student gives the same
-    answer for (a) and (b) (forgets the weight in (a)), deduct
-    only B2 and do not penalize B3 again (ECF).
-
-10. Only one part answered: Grade the parts that are present
-    normally. Do not penalize the missing part more than its
-    own point allocation.
-
-11. Partial work: Give credit for any correct, relevant step
+12. Partial work: Give credit for any correct, relevant step
     even if the student did not finish.
 
-12. Presentation: Do not deduct for messy handwriting or a
-    missing diagram beyond the 8 points in A1, or for unit
-    formatting beyond the 10 points in Part D.
+13. Presentation: Do not deduct for messy handwriting or for
+    unit formatting beyond the 10 points in D2.
 
-13. Blank or irrelevant answer: 0 points. Any genuine attempt
-    with at least a correct setup should receive 15 points or
-    more.
+14. Blank or irrelevant answer: 0 points. Any genuine attempt
+    with at least a correct idea of the setup should receive
+    20 points or more.
 
 
 4. INSTRUCTIONS FOR THE AI GRADER
 ------------------------------------------------------------------
 - Read the handwritten work carefully and transcribe the key
-  values (F_s, W, moment equation, P for (a), P for (b)) before
+  values (m_dot, ideal power, pump input power, turbine output
+  power, annual cost, annual revenue, net revenue) before
   grading.
 
 - If the handwriting is ambiguous, choose the interpretation that
@@ -144,10 +149,10 @@ TOTAL .................................................... 100
 
 - Output for each student in exactly this format:
     Student: <name or ID>
-    Part A: x/25
-    Part B: x/35
-    Part C: x/30
-    Part D: x/10
+    Part A: x/20
+    Part B: x/25
+    Part C: x/25
+    Part D: x/30
     TOTAL: x/100
     Justification: <two sentences: what was correct, where
                     points were lost>
