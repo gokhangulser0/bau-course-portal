@@ -1,132 +1,142 @@
 ==================================================================
 GRADING RUBRIC - MCH 2008 ENGINEERING MECHANICS QUIZ
-Problem 3/10: Support Reactions at O of a 500-kg Uniform Beam
+Problem 3/17: Force P Required to Break Contact at C
 TOTAL: 100 POINTS
 ==================================================================
 
 1. REFERENCE SOLUTION (FOR THE GRADER)
 ------------------------------------------------------------------
-Given: Beam length = 1.2 + 1.8 + 1.8 = 4.8 m (O at x = 0, A at
-1.2 m, B at 3.0 m, C at 4.8 m). The beam is fixed at O (cantilever),
-so the reactions are O_x, O_y and a moment M_O.
+Given: The T-shaped body (m = 0.05 kg) is pinned at O. Take O as
+the origin, x to the right, y up. Then:
+  A = (-120, 0) mm   (P acts downward at A)
+  B = (-60, -40) mm  (spring attached here, pulling left)
+  C = (-60, -80) mm  (contact with the support on the left)
+The center of gravity lies on the stem axis, 60 mm to the left
+of O (by symmetry of the T).
 
-Loads:
-  - Weight: W = m*g = 500 * 9.81 = 4905 N = 4.905 kN, acting
-            downward at the beam's midpoint, x = 2.4 m.
-  - 1.4 kN acts upward at A (x = 1.2 m).
-  - 15 kN*m couple at B, counterclockwise.
-  - 3 kN at C, 30 deg from the vertical, pointing down and to the
-    left:
-        3 sin30 = 1.5 kN   (in -x direction)
-        3 cos30 = 2.598 kN (in -y direction)
+Spring force:
+  F_s = k * x = 1750 N/m * 0.010 m = 17.5 N, pulling B to the
+  left (the spring is stretched). Its moment about O is clockwise.
+  Moment arm = 40 mm (vertical distance from O to B).
 
-Sum of forces in x:
-  O_x - 1.5 = 0
-  O_x = 1.5 kN  (to the right, +x)
+Weight:
+  W = m*g = 0.05 * 9.81 = 0.4905 N, downward, arm = 60 mm.
+  Its moment about O is counterclockwise.
 
-Sum of forces in y:
-  O_y + 1.4 - 4.905 - 2.598 = 0
-  O_y = 6.10 kN  (upward, +y)
+At the instant contact breaks, the contact force at C is zero.
+So only P, W, the spring force and the pin reaction at O act on
+the body. Taking moments about O eliminates the pin reaction.
 
-Sum of moments about O (counterclockwise positive):
-  M_O + 1.4(1.2) - 4.905(2.4) + 15 - 2.598(4.8) = 0
-  M_O + 1.68 - 11.772 + 15 - 12.471 = 0
-  M_O = 7.56 kN*m  (counterclockwise)
+(b) Neglecting weight (counterclockwise positive):
+  Sum M_O = 0:   P(120) - 17.5(40) = 0
+                 P(120) = 700 N*mm
+                 P = 5.83 N
 
-  (The 1.5 kN x-component at C acts along the beam axis and
-   produces no moment about O. The 15 kN*m couple is a free
-   moment and is NOT multiplied by any distance.)
+(a) Including weight:
+  Sum M_O = 0:   P(120) + W(60) - 17.5(40) = 0
+                 P(120) + 0.4905(60) - 700 = 0
+                 P(120) = 700 - 29.43 = 670.57
+                 P = 5.59 N
 
-Final answer:
-  O_x = 1.5 kN,  O_y = 6.10 kN,  M_O = 7.56 kN*m (CCW)
-  (Resultant reaction force |O| = approx. 6.28 kN - optional)
+Final answers:
+  (a) P = 5.59 N (including weight)
+  (b) P = 5.83 N (neglecting weight)
 
 
 2. POINT DISTRIBUTION
 ------------------------------------------------------------------
 PART A - FREE-BODY DIAGRAM AND SETUP (25 points)
-  A1. FBD showing reactions O_x, O_y, M_O at the fixed
-      support (or equivalent clear statement) ............ 8
-  A2. Weight computed (W = approx. 4.905 kN) and placed at
-      the midpoint of the beam (x = 2.4 m) ............... 9
-  A3. 3 kN force resolved correctly into components
-      (1.5 kN and 2.598 kN) ............................... 8
+  A1. FBD showing P, spring force, weight (for part a), pin
+      reaction at O (and recognition that contact at C is
+      lost) ............................................... 8
+  A2. Spring force computed correctly:
+      F_s = k*x = 1750(0.010) = 17.5 N, directed to the
+      left ................................................ 9
+  A3. Recognizes that the contact force at C is zero at the
+      moment contact breaks ............................... 8
 
-PART B - FORCE EQUILIBRIUM (25 points)
-  B1. Sum Fx = 0 written correctly;
-      O_x = approx. 1.5 kN ............................... 10
-  B2. Sum Fy = 0 written correctly (1.4 kN, weight and
-      3 kN y-component all included);
-      O_y = approx. 6.10 kN .............................. 15
+PART B - SOLUTION (a): INCLUDING WEIGHT (35 points)
+  B1. Moment equation about O written with correct arms
+      (120 mm for P, 40 mm for the spring, 60 mm for W)
+      and correct signs (P and W opposite to the spring
+      moment) ............................................. 12
+  B2. Weight computed correctly (W = approx. 0.49 N) and
+      placed at 60 mm from O ............................... 10
+  B3. P = approx. 5.59 N ................................... 13
 
-PART C - MOMENT EQUILIBRIUM (35 points)
-  C1. Moment equation about O written with correct moment
-      arms (1.2 m, 2.4 m, 4.8 m) .......................... 10
-  C2. 15 kN*m couple included correctly as a free moment
-      (no moment arm applied) ............................. 10
-  C3. M_O = approx. 7.56 kN*m (CCW) ....................... 15
+PART C - SOLUTION (b): NEGLECTING WEIGHT (30 points)
+  C1. Moment equation about O written correctly
+      (P(120) = 17.5(40)) ................................. 10
+  C2. P = approx. 5.83 N ................................... 20
 
-PART D - FINAL ANSWER (15 points)
-  D1. Clear final statement of O_x, O_y and M_O with
-      units and directions/senses ......................... 15
+PART D - FINAL ANSWER (10 points)
+  D1. Clear final statement of both answers (a) and (b)
+      with units (N) ...................................... 10
 
 TOTAL .................................................... 100
 
 
 3. GRADING POLICY (LENIENT - THIS IS A QUIZ)
 ------------------------------------------------------------------
-1.  Error carried forward (ECF): If an early mistake is propagated
-    consistently, do NOT penalize it again in later parts. Give
-    full credit for later steps that are correct given the
-    student's earlier values.
+1.  Error carried forward (ECF): If an early mistake is
+    propagated consistently, do NOT penalize it again in later
+    parts. Give full credit for later steps that are correct
+    given the student's earlier values.
 
-2.  Tolerance: Accept answers within +/-3% of the reference values
-    (e.g., O_y = 5.92-6.28 kN, M_O = 7.33-7.79 kN*m).
+2.  Tolerance: Accept answers within +/-3% of the reference
+    values (e.g., (a) P = 5.42-5.76 N, (b) P = 5.66-6.00 N).
 
 3.  Value of g: g = 9.81, 9.8, or 10 m/s^2 are all acceptable.
-    Do not penalize the small differences this causes in the
-    final numbers.
+    Do not penalize the small differences this causes in
+    part (a).
 
-4.  Unit slips: Mixing N and kN, or N*m and kN*m, costs at most
+4.  Unit slips: Mixing mm and m, or N and kN, costs at most
     3 points in total, as long as the numerical work is
-    consistent.
+    consistent. (A common slip is using x = 10 instead of
+    0.010 m in F_s = k*x without converting units; treat it as
+    a unit slip if the rest of the method is correct.)
 
 5.  Sign / direction convention: If the student clearly states a
     different but reasonable sign convention (e.g., clockwise
-    positive), grade against the student's own convention. Do not
-    deduct more than 3 points in total for sign or direction
-    errors alone.
+    positive), grade against the student's own convention. Do
+    not deduct more than 3 points in total for sign errors alone.
 
-6.  Alternative methods: Taking moments about another point (such
-    as C) and then using force equilibrium is fully acceptable.
-    Treating the distributed weight as a single force at the
-    midpoint is expected.
+6.  Alternative methods: Taking moments about another point
+    (for example C) is acceptable as long as the pin reaction
+    at O is handled correctly. Using force equations in
+    addition to moments is also acceptable.
 
-7.  Minor arithmetic errors: A single arithmetic slip with correct
-    method loses at most half of that line's points.
+7.  Minor arithmetic errors: A single arithmetic slip with
+    correct method loses at most half of that line's points.
 
-8.  Correct method, wrong or missing number: Award at least 50% of
-    that line's points.
+8.  Correct method, wrong or missing number: Award at least 50%
+    of that line's points.
 
-9.  Missing weight: If the student forgets the beam's weight but
-    otherwise uses a correct method, deduct only the points of
-    A2 and do not penalize the later numerical values (ECF).
+9.  Missing weight in part (a): If the student gives the same
+    answer for (a) and (b) (forgets the weight in (a)), deduct
+    only B2 and do not penalize B3 again (ECF).
 
-10. Partial work: Give credit for any correct, relevant step even
-    if the student did not finish.
+10. Only one part answered: Grade the parts that are present
+    normally. Do not penalize the missing part more than its
+    own point allocation.
 
-11. Presentation: Do not deduct for messy handwriting or a
+11. Partial work: Give credit for any correct, relevant step
+    even if the student did not finish.
+
+12. Presentation: Do not deduct for messy handwriting or a
     missing diagram beyond the 8 points in A1, or for unit
-    formatting beyond the 15 points in Part D.
+    formatting beyond the 10 points in Part D.
 
-12. Blank or irrelevant answer: 0 points. Any genuine attempt with
-    at least a correct setup should receive 15 points or more.
+13. Blank or irrelevant answer: 0 points. Any genuine attempt
+    with at least a correct setup should receive 15 points or
+    more.
 
 
 4. INSTRUCTIONS FOR THE AI GRADER
 ------------------------------------------------------------------
 - Read the handwritten work carefully and transcribe the key
-  values (W, 3 kN components, O_x, O_y, M_O) before grading.
+  values (F_s, W, moment equation, P for (a), P for (b)) before
+  grading.
 
 - If the handwriting is ambiguous, choose the interpretation that
   is more favorable to the student and add the flag:
@@ -135,9 +145,9 @@ TOTAL .................................................... 100
 - Output for each student in exactly this format:
     Student: <name or ID>
     Part A: x/25
-    Part B: x/25
-    Part C: x/35
-    Part D: x/15
+    Part B: x/35
+    Part C: x/30
+    Part D: x/10
     TOTAL: x/100
     Justification: <two sentences: what was correct, where
                     points were lost>
