@@ -1,0 +1,153 @@
+==================================================================
+GRADING RUBRIC - MCH 2008 ENGINEERING MECHANICS QUIZ
+Problem 3/10: Support Reactions at O of a 500-kg Uniform Beam
+TOTAL: 100 POINTS
+==================================================================
+
+1. REFERENCE SOLUTION (FOR THE GRADER)
+------------------------------------------------------------------
+Given: Beam length = 1.2 + 1.8 + 1.8 = 4.8 m (O at x = 0, A at
+1.2 m, B at 3.0 m, C at 4.8 m). The beam is fixed at O (cantilever),
+so the reactions are O_x, O_y and a moment M_O.
+
+Loads:
+  - Weight: W = m*g = 500 * 9.81 = 4905 N = 4.905 kN, acting
+            downward at the beam's midpoint, x = 2.4 m.
+  - 1.4 kN acts upward at A (x = 1.2 m).
+  - 15 kN*m couple at B, counterclockwise.
+  - 3 kN at C, 30 deg from the vertical, pointing down and to the
+    left:
+        3 sin30 = 1.5 kN   (in -x direction)
+        3 cos30 = 2.598 kN (in -y direction)
+
+Sum of forces in x:
+  O_x - 1.5 = 0
+  O_x = 1.5 kN  (to the right, +x)
+
+Sum of forces in y:
+  O_y + 1.4 - 4.905 - 2.598 = 0
+  O_y = 6.10 kN  (upward, +y)
+
+Sum of moments about O (counterclockwise positive):
+  M_O + 1.4(1.2) - 4.905(2.4) + 15 - 2.598(4.8) = 0
+  M_O + 1.68 - 11.772 + 15 - 12.471 = 0
+  M_O = 7.56 kN*m  (counterclockwise)
+
+  (The 1.5 kN x-component at C acts along the beam axis and
+   produces no moment about O. The 15 kN*m couple is a free
+   moment and is NOT multiplied by any distance.)
+
+Final answer:
+  O_x = 1.5 kN,  O_y = 6.10 kN,  M_O = 7.56 kN*m (CCW)
+  (Resultant reaction force |O| = approx. 6.28 kN - optional)
+
+
+2. POINT DISTRIBUTION
+------------------------------------------------------------------
+PART A - FREE-BODY DIAGRAM AND SETUP (25 points)
+  A1. FBD showing reactions O_x, O_y, M_O at the fixed
+      support (or equivalent clear statement) ............ 8
+  A2. Weight computed (W = approx. 4.905 kN) and placed at
+      the midpoint of the beam (x = 2.4 m) ............... 9
+  A3. 3 kN force resolved correctly into components
+      (1.5 kN and 2.598 kN) ............................... 8
+
+PART B - FORCE EQUILIBRIUM (25 points)
+  B1. Sum Fx = 0 written correctly;
+      O_x = approx. 1.5 kN ............................... 10
+  B2. Sum Fy = 0 written correctly (1.4 kN, weight and
+      3 kN y-component all included);
+      O_y = approx. 6.10 kN .............................. 15
+
+PART C - MOMENT EQUILIBRIUM (35 points)
+  C1. Moment equation about O written with correct moment
+      arms (1.2 m, 2.4 m, 4.8 m) .......................... 10
+  C2. 15 kN*m couple included correctly as a free moment
+      (no moment arm applied) ............................. 10
+  C3. M_O = approx. 7.56 kN*m (CCW) ....................... 15
+
+PART D - FINAL ANSWER (15 points)
+  D1. Clear final statement of O_x, O_y and M_O with
+      units and directions/senses ......................... 15
+
+TOTAL .................................................... 100
+
+
+3. GRADING POLICY (LENIENT - THIS IS A QUIZ)
+------------------------------------------------------------------
+1.  Error carried forward (ECF): If an early mistake is propagated
+    consistently, do NOT penalize it again in later parts. Give
+    full credit for later steps that are correct given the
+    student's earlier values.
+
+2.  Tolerance: Accept answers within +/-3% of the reference values
+    (e.g., O_y = 5.92-6.28 kN, M_O = 7.33-7.79 kN*m).
+
+3.  Value of g: g = 9.81, 9.8, or 10 m/s^2 are all acceptable.
+    Do not penalize the small differences this causes in the
+    final numbers.
+
+4.  Unit slips: Mixing N and kN, or N*m and kN*m, costs at most
+    3 points in total, as long as the numerical work is
+    consistent.
+
+5.  Sign / direction convention: If the student clearly states a
+    different but reasonable sign convention (e.g., clockwise
+    positive), grade against the student's own convention. Do not
+    deduct more than 3 points in total for sign or direction
+    errors alone.
+
+6.  Alternative methods: Taking moments about another point (such
+    as C) and then using force equilibrium is fully acceptable.
+    Treating the distributed weight as a single force at the
+    midpoint is expected.
+
+7.  Minor arithmetic errors: A single arithmetic slip with correct
+    method loses at most half of that line's points.
+
+8.  Correct method, wrong or missing number: Award at least 50% of
+    that line's points.
+
+9.  Missing weight: If the student forgets the beam's weight but
+    otherwise uses a correct method, deduct only the points of
+    A2 and do not penalize the later numerical values (ECF).
+
+10. Partial work: Give credit for any correct, relevant step even
+    if the student did not finish.
+
+11. Presentation: Do not deduct for messy handwriting or a
+    missing diagram beyond the 8 points in A1, or for unit
+    formatting beyond the 15 points in Part D.
+
+12. Blank or irrelevant answer: 0 points. Any genuine attempt with
+    at least a correct setup should receive 15 points or more.
+
+
+4. INSTRUCTIONS FOR THE AI GRADER
+------------------------------------------------------------------
+- Read the handwritten work carefully and transcribe the key
+  values (W, 3 kN components, O_x, O_y, M_O) before grading.
+
+- If the handwriting is ambiguous, choose the interpretation that
+  is more favorable to the student and add the flag:
+  NEEDS HUMAN REVIEW
+
+- Output for each student in exactly this format:
+    Student: <name or ID>
+    Part A: x/25
+    Part B: x/25
+    Part C: x/35
+    Part D: x/15
+    TOTAL: x/100
+    Justification: <two sentences: what was correct, where
+                    points were lost>
+    Flags: <none, or NEEDS HUMAN REVIEW + reason>
+
+- Round totals to the nearest whole point.
+
+- Be encouraging in tone and do not penalize the same mistake
+  twice.
+
+==================================================================
+END OF RUBRIC
+==================================================================
