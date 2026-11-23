@@ -17,9 +17,11 @@ st.set_page_config(
 # --- Dosyalar ve ayarlar ---
 DB_FILE = "grades_database.xlsx"
 HW_FILE = "MCH2008_homework.xlsx"
+MIDTERM_FILE = "MCH2008_midterm.xlsx"
 STATUS_FILE = "class_status.csv"      # "No Class This Week" kayıtları
 META_FILE = "portal_meta.json"        # process_week.py'nin yazdığı "son güncelleme" bilgisi
 NEWEST_FIRST = True                   # Haftalık kayıtlarda en yeni hafta üstte
+MCH2008_MIDTERM_PTS = 20.0            # Vizenin toplam nota katkısı (%20)
 
 
 def get_secret(name, default=None):
@@ -102,8 +104,31 @@ def get_homework(hw_mtime):
     return pd.DataFrame()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def get_midterm(midterm_mtime):
+    if os.path.exists(MIDTERM_FILE):
+        xl = pd.ExcelFile(MIDTERM_FILE)
+        target_sheet = None
+        if "All Sections" in xl.sheet_names:
+            candidate = pd.read_excel(MIDTERM_FILE, sheet_name="All Sections")
+            if "Midterm" in candidate.columns:
+                target_sheet = candidate
+        if target_sheet is None:
+            dfs = []
+            for s in xl.sheet_names:
+                tmp = pd.read_excel(MIDTERM_FILE, sheet_name=s)
+                if "Midterm" in tmp.columns:
+                    dfs.append(tmp)
+            target_sheet = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+        if not target_sheet.empty and "Student ID" in target_sheet.columns:
+            target_sheet["Student ID"] = target_sheet["Student ID"].apply(clean_id_str)
+            return target_sheet
+    return pd.DataFrame()
+
+
 df_all, df_db, status_df, STATS, HIDDEN_ROWS = load_all(_mtime(DB_FILE), _mtime(STATUS_FILE))
 df_hw = get_homework(_mtime(HW_FILE))
+df_midterm = get_midterm(_mtime(MIDTERM_FILE))
 
 
 # --- HTML yardımcıları ---
@@ -224,10 +249,29 @@ def render_homework_block(sid, cfg):
     return hw_cols, hw_scores, valid, hw_earned, per_point
 
 
+def get_student_midterm(sid, course, cfg):
+    """MCH2008 için öğrencinin vize notunu (0-100) ve katkısını (%20 -> 0-20 puan) döndürür."""
+    midterm_pts = float(cfg.get("midterm_pts", MCH2008_MIDTERM_PTS if course == "MCH2008" else 0.0))
+    if midterm_pts <= 0 or df_midterm.empty or "Midterm" not in df_midterm.columns:
+        return None, 0.0, midterm_pts
+
+    st_mt = df_midterm[df_midterm["Student ID"] == sid]
+    if not st_mt.empty:
+        val = st_mt.iloc[0]["Midterm"]
+        if pd.notna(val) and str(val).strip() != "" and str(val).strip().lower() != "pending":
+            try:
+                score = float(str(val).strip())
+                earned = score * (midterm_pts / 100.0)
+                return score, earned, midterm_pts
+            except ValueError:
+                pass
+    return None, 0.0, midterm_pts
+
+
 def student_view():
     st.title("🎓 Student Academic Portal")
     st.write("Enter your **Student ID** to view attendance records, quiz results, homework grades, "
-             "and weighted course averages.")
+             "midterm score, and weighted course averages.")
     last_updated_caption()
 
     raw_input = st.text_input("Student ID:", placeholder="e.g. 1111111")
@@ -247,12 +291,19 @@ def student_view():
             student_name = student_name or m.iloc[0]["Full Name"]
             if "MCH2008" not in enrolled:
                 enrolled.append("MCH2008")
+    if not df_midterm.empty:
+        m = df_midterm[df_midterm["Student ID"] == sid]
+        if not m.empty:
+            if not student_name and "Full Name" in m.columns:
+                student_name = m.iloc[0]["Full Name"]
+            if "MCH2008" not in enrolled:
+                enrolled.append("MCH2008")
 
     if not enrolled:
         st.error("No record found matching this Student ID. Please ensure your ID is entered correctly.")
         return
 
-    st.success(f"Welcome, **{student_name}**!")
+    st.success(f"Welcome, **{student_name or sid}**!")
     course = st.selectbox("Select Enrolled Course:", enrolled)
     st.markdown(f"### Academic Status: `{course}`")
 
@@ -279,25 +330,36 @@ def student_view():
 
         if cfg:
             hw_cols, hw_scores, valid, hw_earned, per_point = render_homework_block(sid, cfg)
+            midterm_score, midterm_earned, midterm_pts = get_student_midterm(sid, course, cfg)
             best, qpts = cfg["best_quizzes"], cfg["quiz_pts"]
             quiz_earned = pl.quiz_points(scores, best, qpts) if scores else 0.0
             quiz_avg = (sum(sorted(scores, reverse=True)[:best]) / len(sorted(scores, reverse=True)[:best])) \
                 if scores else None
-            total = hw_earned + quiz_earned
-            base = cfg["hw_pts"] + cfg["quiz_pts"]
+            total = hw_earned + quiz_earned + midterm_earned
+            base = cfg["hw_pts"] + cfg["quiz_pts"] + midterm_pts
 
             st.markdown("#### 📊 Course Performance & Standing")
-            metric_grid([
+            cards = [
                 metric_card(f"Homework Contribution (%{cfg['hw_pts']:.0f})",
                             f"{hw_earned:.2f} / {cfg['hw_pts']:.2f} pts",
                             f"{len(valid)}/{cfg['hw_count']} evaluated" if valid else "Pending"),
                 metric_card(f"Best {best} Quizzes Avg (%{cfg['quiz_pts']:.0f})",
                             f"{quiz_avg:.1f} / 100" if quiz_avg is not None else "Pending",
                             f"+{quiz_earned:.2f} / {cfg['quiz_pts']:.2f} pts earned" if quiz_avg is not None else ""),
-                metric_card(f"Current Standing (%{base:.0f} Base)", f"{total:.2f} / {base:.2f} pts"),
-            ])
-            st.caption(f"Your final grade counts your best {best} of {cfg['total_quizzes']} quizzes, "
-                       f"worth {cfg['quiz_pts']:.0f} points in total.")
+            ]
+            if midterm_pts > 0:
+                cards.append(
+                    metric_card(f"Midterm Exam (%{midterm_pts:.0f})",
+                                f"{fmt_num(midterm_score)} / 100" if midterm_score is not None else "Pending",
+                                f"+{midterm_earned:.2f} / {midterm_pts:.2f} pts earned"
+                                if midterm_score is not None else "Not published yet")
+                )
+            cards.append(metric_card(f"Current Standing (%{base:.0f} Base)", f"{total:.2f} / {base:.2f} pts"))
+            metric_grid(cards)
+
+            st.caption(f"Your final grade counts your best {best} of {cfg['total_quizzes']} quizzes "
+                       f"({cfg['quiz_pts']:.0f} pts), homework ({cfg['hw_pts']:.0f} pts)"
+                       + (f", and the midterm exam ({midterm_pts:.0f} pts)." if midterm_pts > 0 else "."))
 
             st.markdown("##### 📝 Homework Breakdown")
             hw_cards = []
@@ -320,6 +382,8 @@ def student_view():
         if cfg:
             held = pl.held_quizzes(df_db, course, section) | set(qscores)
             remaining = pl.remaining_quizzes(cfg, held)
+            _, midterm_earned, midterm_pts = get_student_midterm(sid, course, cfg)
+            sim_base = cfg["hw_pts"] + cfg["quiz_pts"] + midterm_pts
 
             st.markdown("#### 🎯 What-if Calculator")
             if remaining == 0:
@@ -335,9 +399,9 @@ def student_view():
                     metric_card("Quiz points now", f"{res['current']:.2f} / {cfg['quiz_pts']:.2f}"),
                     metric_card("Projected quiz points", f"{res['projected']:.2f} / {cfg['quiz_pts']:.2f}",
                                 f"{res['projected'] - res['current']:+.2f} vs. now"),
-                    metric_card(f"Projected standing (%{cfg['hw_pts'] + cfg['quiz_pts']:.0f} base)",
-                                f"{hw_earned + res['projected']:.2f} / {cfg['hw_pts'] + cfg['quiz_pts']:.2f}",
-                                f"max possible {hw_earned + res['max']:.2f}"),
+                    metric_card(f"Projected standing (%{sim_base:.0f} base)",
+                                f"{hw_earned + midterm_earned + res['projected']:.2f} / {sim_base:.2f}",
+                                f"max possible {hw_earned + midterm_earned + res['max']:.2f}"),
                 ])
                 st.caption(f"Only your best {cfg['best_quizzes']} of {cfg['total_quizzes']} quizzes count. "
                            "A cancelled class does not change the total number of quizzes. "
@@ -484,6 +548,17 @@ def class_status_tab(all_courses):
 
 
 def analytics_tab(sel_course):
+    if sel_course == "MCH2008" and not df_midterm.empty and "Midterm" in df_midterm.columns:
+        mt_vals = pd.to_numeric(df_midterm["Midterm"], errors="coerce").dropna()
+        if not mt_vals.empty:
+            st.subheader("📝 MCH2008 Midterm Overview (%20 Weight)")
+            mt1, mt2, mt3, mt4 = st.columns(4)
+            mt1.metric("Evaluated Students", len(mt_vals))
+            mt2.metric("Average Score", f"{mt_vals.mean():.1f} / 100")
+            mt3.metric("Median Score", f"{mt_vals.median():.1f} / 100")
+            mt4.metric("Highest / Lowest", f"{mt_vals.max():.0f} / {mt_vals.min():.0f}")
+            st.divider()
+
     if sel_course == "MCH2008" and not df_hw.empty:
         st.subheader("📚 MCH2008 Homework Overview")
         hw_summary = []
@@ -574,7 +649,7 @@ def instructor_view():
     all_courses = set()
     if not df_all.empty:
         all_courses.update(df_all["course_code"].dropna().unique().tolist())
-    if not df_hw.empty:
+    if not df_hw.empty or not df_midterm.empty:
         all_courses.add("MCH2008")
     all_courses = sorted(all_courses)
 
