@@ -45,6 +45,14 @@
           "weight": 20.0,
           "column": "Midterm",
           "workbook": "MCH2008_midterm.xlsx"
+        },
+        {
+          "label": "Final",
+          "key": "final",
+          "weight": 40.0,
+          "type": "single",
+          "column": "Final",
+          "workbook": "MCH2008_finals.xlsx"
         }
       ],
       "roster_section_column": "Section"
