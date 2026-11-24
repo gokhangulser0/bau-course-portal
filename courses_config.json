@@ -1,0 +1,85 @@
+{
+  "active_term": "2026-2027fall",
+  "terms": [
+    "2026-2027fall"
+  ],
+  "courses": {
+    "MCH2008": {
+      "code": "MCH2008",
+      "title": "Engineering Mechanics",
+      "term": "2026-2027fall",
+      "weeks": 9,
+      "show_standing": true,
+      "sections": [
+        "901",
+        "902"
+      ],
+      "workbooks": {
+        "attendance": "MCH2008_attendance.xlsx",
+        "grades": "MCH2008_grades.xlsx"
+      },
+      "components": [
+        {
+          "label": "Quiz",
+          "key": "quiz",
+          "type": "quiz",
+          "weight": 20.0,
+          "count": 9,
+          "rule": "best_n",
+          "best_n": 7
+        },
+        {
+          "label": "Homework",
+          "key": "homework",
+          "type": "items",
+          "weight": 20.0,
+          "count": 5,
+          "rule": "all",
+          "column_prefix": "HW #",
+          "workbook": "MCH2008_homework.xlsx"
+        },
+        {
+          "label": "Midterm",
+          "key": "midterm",
+          "type": "single",
+          "weight": 20.0,
+          "column": "Midterm",
+          "workbook": "MCH2008_midterm.xlsx"
+        }
+      ],
+      "roster_section_column": "Section"
+    },
+    "MCH2015": {
+      "code": "MCH2015",
+      "title": "Introduction to Heat and Fluid Dynamics",
+      "term": "2026-2027fall",
+      "sections": [
+        "901",
+        "902"
+      ],
+      "weeks": 9,
+      "show_standing": false,
+      "workbooks": {
+        "attendance": "MCH2015_attendance.xlsx",
+        "grades": "MCH2015_grades.xlsx"
+      },
+      "components": [
+        {
+          "key": "quiz",
+          "label": "Quiz",
+          "type": "quiz",
+          "weight": 0.0,
+          "count": 5,
+          "rule": "all"
+        }
+      ],
+      "roster_section_column": "Section"
+    }
+  },
+  "settings": {
+    "newest_first": true,
+    "min_class_for_chart": 5,
+    "announcement_feed_size": 5,
+    "backup_keep_per_file": 40
+  }
+}
