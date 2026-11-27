@@ -312,6 +312,15 @@ _live_panel = st.fragment(run_every=2)(_live) if hasattr(st, "fragment") else _l
 
 
 # ----------------------------------------------------------------------------- review
+def _mark_present(q, roster, sids):
+    q["attendance"]["present"] = sorted(set(q["attendance"].get("present") or []) | set(sids))
+    for u in q["attendance"].get("unknown") or []:
+        if u.get("id") in sids:
+            u["resolved"] = True
+    grader.refresh_flags(q, roster)
+    grader.save_queue(q)
+
+
 def _roster_label(roster, sid):
     r = roster.get(sid)
     return f"{sid} · {r['name']} · Sec {r['section']}" if r else f"{sid} · not on roster"
@@ -371,6 +380,27 @@ def review_tab(cfg):
                 q["attendance"]["unknown"] = []
                 grader.refresh_flags(q, roster)
                 grader.save_queue(q)
+                st.rerun()
+
+    # ---------------------------------------------------------------- papers without a signature
+    nosig = [p for p in q["papers"] if not p.get("excluded") and p.get("student_id")
+             and any(f["code"] == "no_signature" for f in p.get("flags", []))]
+    if editable and nosig and q["attendance"].get("processed"):
+        handwritten = {u.get("id") for u in q["attendance"].get("unknown") or []}
+        with st.container(border=True):
+            st.markdown(f"**{len(nosig)} paper(s) from students who are not on the present list**")
+            st.caption("Without a signature the score is recorded as 0. If the student was in class (for example, "
+                       "they wrote their ID by hand on this section's sheet), mark them present.")
+            for p in nosig:
+                sid = p["student_id"]
+                c1, c2 = st.columns([5, 1.2])
+                hint = " · ID found on the attendance sheet" if sid in handwritten else ""
+                c1.write(f"{p['pid']} · {_roster_label(roster, sid)} · score {p.get('score')}{hint}")
+                if c2.button("Mark present", key=f"mp_{qid}_{p['pid']}"):
+                    _mark_present(q, roster, [sid])
+                    st.rerun()
+            if len(nosig) > 1 and st.button("Mark all present", key=f"mp_all_{qid}"):
+                _mark_present(q, roster, [p["student_id"] for p in nosig])
                 st.rerun()
 
     # ---------------------------------------------------------------- papers table

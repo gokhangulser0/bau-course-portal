@@ -247,3 +247,16 @@ write a text report before the JSON, a 17-item breakdown, sequential calls, runs
 * **Same-scan warning**: every run stores the SHA-1 of its scans (`file_hashes`); grading the same PDF again
   (e.g. under another week or quiz number) needs an explicit confirmation.
 * `temperature` is tried once per model per session.
+
+## 15. Students attending another section's session (27 Nov 2026)
+
+* **Attendance sheet:** a handwritten ID the model reads and that matches the roster exactly is present even if
+  the model also marks it uncertain (`grader.classify_attendance_ids`). An ID listed only as uncertain becomes
+  present when the same student also hands in a graded paper in that run (`grader.reconcile_attendance`).
+  Review & Publish lists papers of students who are not on the present list with a **Mark present** button.
+* **Runs without an attendance sheet** (a second quiz in the same session): the attendance already recorded for
+  the week is used only for students who were in this session (their `attended_section`), and a paper in the
+  stack also counts as presence. A "no paper" 0 inferred this way never replaces a recorded score.
+* **Where a quiz was held** (absent zeros): from graded records only, by the section the student attended.
+* **Student View order:** several quizzes in one week, and the items of a criterion (HW, Exp, ...), are listed
+  with the highest number first.

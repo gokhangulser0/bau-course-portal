@@ -99,10 +99,11 @@ def record_items(course_code, c, sid, rows, status_rows, tables, updates):
     if not rows.empty:
         # A row with a quiz score reports the quiz; only attendance-only rows report attendance
         att_only = rows[rows["quiz_score_num"].isna()] if "quiz_score_num" in rows else rows
-        for wk, g in att_only.groupby("week_no"):
+        for wk, g in sorted(att_only.groupby("week_no"), key=lambda x: x[0], reverse=True):
             if any(badges.is_recent(v) for v in g.get("updated_at", [])):
                 out.append((f"{course_code} · Week {int(wk)} attendance", f"week:{int(wk)}"))
-        for _, r in rows[rows["quiz_n"].notna() & rows["quiz_score_num"].notna()].iterrows():
+        graded = rows[rows["quiz_n"].notna() & rows["quiz_score_num"].notna()].sort_values("quiz_n", ascending=False)
+        for _, r in graded.iterrows():
             if badges.is_recent(r.get("updated_at")):
                 q = int(r["quiz_n"])
                 out.append((f"{course_code} · Quiz {q} score and feedback", f"quiz:{q}"))
@@ -113,7 +114,7 @@ def record_items(course_code, c, sid, rows, status_rows, tables, updates):
     if c:
         for comp in cfgmod.workbook_components(c):
             row = stmod.student_row(tables.get(comp["workbook"]), sid) or {}
-            for col in cfgmod.item_columns(comp):
+            for col in reversed(cfgmod.item_columns(comp)):
                 if stmod.to_number(row.get(col)) is None:
                     continue
                 ts = badges.item_updated(updates, course_code, col, sid)
@@ -223,7 +224,7 @@ def criterion_card(r, att, new_groups, show_points: bool) -> str:
     chips = ""
     if n_items > 1 and comp["type"] != "quiz":
         parts = []
-        for i in r.items:
+        for i in reversed(r.items):           # the latest (highest-numbered) item first
             cls = "chip-done" if i.score is not None else ("chip-miss" if i.held else "chip-wait")
             txt = fmt_num(i.score) if i.score is not None else ("0" if i.held else "—")
             nb = " •" if f"item:{comp['key']}:{i.label}" in new_groups else ""
@@ -259,8 +260,8 @@ def overview_tab(cfg, c, course, sid, section, rows, df_db, stats, tables, new_g
                 continue                      # feedback only for Experiment / Lab Report (and quizzes above)
             row = stmod.student_row(tables.get(comp["workbook"]), sid) or {}
             notes = [(i.label, i.score, row.get(cfgmod.feedback_column(i.label))) for i in r.items]
-            notes = [(lb, sc, fb) for lb, sc, fb in notes if sc is not None or (fb and str(fb).strip()
-                                                                               and str(fb).lower() != "nan")]
+            notes = [(lb, sc, fb) for lb, sc, fb in reversed(notes) if sc is not None or (fb and str(fb).strip()
+                                                                                         and str(fb).lower() != "nan")]
             if notes:
                 with st.expander(f"{comp['label']} feedback ({len(notes)})"):
                     for lb, sc, fb in notes:

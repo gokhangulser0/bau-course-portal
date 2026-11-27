@@ -218,10 +218,49 @@ ATTENDANCE_TOOL = {
     "name": "submit_attendance", "description": "Submit the signatures found on this attendance page.",
     "input_schema": {"type": "object", "properties": {
         "present_ids": {"type": "array", "items": {"type": "string"},
-                        "description": "IDs of signed rows and clearly written added IDs."},
+                        "description": "IDs of signed printed rows and every added ID you can read with confidence."},
         "uncertain_ids": {"type": "array", "items": {"type": "string"},
-                          "description": "Handwritten IDs you could not read with certainty, as read."}},
+                          "description": "Only added IDs whose digits you cannot read with confidence, as read."}},
         "required": ["present_ids", "uncertain_ids"]}}
+
+
+def classify_attendance_ids(ids, unsure, roster_ids) -> tuple[set, list]:
+    """(present ids, [(id, how, raw)] to review). A read ID that matches the roster exactly counts as present even
+    when the model also listed it as uncertain. IDs listed only as uncertain are left for review (they become
+    present automatically when the same student also hands in a paper, see reconcile_attendance)."""
+    present, review, seen = set(), [], set()
+    unsure_s = {str(x).strip() for x in unsure or []}
+    read_s = {str(x).strip() for x in ids or []}
+    for raw in [str(x).strip() for x in list(ids or []) + list(unsure or [])]:
+        if raw in seen:
+            continue
+        seen.add(raw)
+        sid, how = match_to_roster(raw, roster_ids)
+        if sid and sid in roster_ids and raw in read_s and (raw not in unsure_s or how == "exact"):
+            present.add(sid)
+        elif sid:
+            review.append((sid, how, raw))
+    return present, review
+
+
+def reconcile_attendance(queue: dict, roster_ids) -> list[str]:
+    """IDs left for review on the attendance sheet whose student also handed in a graded paper in this run are
+    marked present (two independent pieces of evidence). Returns the IDs that were added."""
+    papers = {p.get("student_id") for p in queue.get("papers", []) if p.get("student_id") and not p.get("excluded")}
+    present = set(queue["attendance"].get("present") or [])
+    added = []
+    for u in queue["attendance"].get("unknown") or []:
+        sid = u.get("id")
+        if not u.get("resolved") and sid in roster_ids and sid in papers and sid not in present:
+            present.add(sid)
+            added.append(sid)
+        if sid in present:
+            u["resolved"] = True
+    if added:
+        queue["attendance"]["present"] = sorted(present)
+        queue.setdefault("notes", []).append(
+            "Marked present (handwritten ID on the attendance sheet and a graded paper): " + ", ".join(sorted(added)))
+    return added
 
 
 def grade_call(client: "ClaudeClient", system: str, tool: dict, b64_pdf: str, text: str,
@@ -351,8 +390,11 @@ TASK:
 1. For printed rows: look closely at the 'Signature' box of each student. If it is signed/marked, the student is PRESENT.
 2. For handwritten additions at the bottom or in the margins (students from other sections write their ID there): extract the numerical Student ID.
 
+3. Put every ID you can read with confidence (signed printed rows AND clearly written added IDs) in present_ids.
+   Use uncertain_ids ONLY for added IDs whose digits you cannot read with confidence.
+
 OUTPUT ONLY a JSON object:
-{"present_ids": ["2202739", "2366349"], "uncertain_ids": ["22O2739"], "notes": "optional short note"}"""
+{"present_ids": ["1234567", "7654321"], "uncertain_ids": ["12345?7"], "notes": "optional short note"}"""
 
 
 def quiz_system_prompt(course: str, section: str, quiz: int, rubric: str, roster_ids, target: str = "quiz",
@@ -476,8 +518,9 @@ def compute_flags(p: dict, roster: dict, section: str, low_conf: float, dup_ids:
     if p.get("incomplete"):
         add("missing_pages", "warning", "This paper has fewer pages than expected (incomplete scan).")
     if present_ids is not None and sid and sid in roster and sid not in present_ids:
-        add("no_signature", "warning", "A paper was found but there is no attendance signature. By policy the "
-                                       "score is recorded as 0 unless you add the student to the present list.")
+        add("no_signature", "warning", "A paper was found but the student is not on the present list. By policy "
+                                       "the score is recorded as 0 unless you mark the student present "
+                                       "(Mark present, above the papers table).")
     return flags
 
 
@@ -648,13 +691,11 @@ def run_grading(job: GradingJob, api_key: str, on_event=None, cancel=None) -> di
                     obj = _parse_json(_text(resp))
                 ids = obj.get("present_ids", obj) if isinstance(obj, dict) else obj
                 unsure = obj.get("uncertain_ids", []) if isinstance(obj, dict) else []
-                for raw in list(ids) + list(unsure):
-                    sid, how = match_to_roster(raw, roster_ids)
-                    if sid and sid in roster_ids and raw not in unsure:
-                        present.add(sid)
-                    elif sid:
-                        queue["attendance"]["unknown"].append({"raw": str(raw), "id": sid, "how": how,
-                                                               "file": fname, "page": pno, "resolved": False})
+                page_present, review = classify_attendance_ids(ids, unsure, roster_ids)
+                present |= page_present
+                for sid, how, raw in review:
+                    queue["attendance"]["unknown"].append({"raw": raw, "id": sid, "how": how,
+                                                           "file": fname, "page": pno, "resolved": False})
                 queue["attendance"]["pages"].append({"file": fname, "page": pno, "found": len(ids)})
                 emit("attendance", i, len(att_pages), f"{fname} page {pno}: {len(ids)} signature(s)")
             except (billing.BudgetExceeded, RunCancelled):
@@ -722,6 +763,8 @@ def run_grading(job: GradingJob, api_key: str, on_event=None, cancel=None) -> di
             except Exception as e:  # noqa: BLE001
                 queue["notes"].append(f"The PDFs could not be copied to term_archive/{job.course}/: {e}")
         queue["usage"] = tracker.as_dict()
+        if queue["attendance"].get("processed"):
+            reconcile_attendance(queue, roster_ids)
         refresh_flags(queue, roster, settings["low_confidence"])
         save_queue(queue)
         if tracker.calls:
@@ -913,11 +956,21 @@ def _run_context(queue: dict, course: dict) -> dict:
     secs = sections_of(queue["section"])
     section_ids = {sid for sid, r in roster.items() if r["section"] in secs}
     # attendance already on file for this week (workbook + database), read before anything is written
-    marks = az.attendance_marks(course, az.prepare_db(dbio.read_records()))
+    pdb = az.prepare_db(dbio.read_records())
+    marks = az.attendance_marks(course, pdb)
     if not processed:
         # no attendance sheet in this run (e.g. a second quiz in the same session): use the attendance already
-        # recorded for this week, so present students without a paper get 0 and absent students get 0
-        present = {sid for sid in section_ids if marks.get((sid, week)) == "+"}
+        # recorded for this week, but only for students who were in THIS session (a student who attended another
+        # section's session that week is left alone), so present students without a paper get 0
+        wk = pdb[(pdb["_course"] == course["code"]) & (pdb["_wn"] == week)
+                 & pdb["attendance"].astype(str).str.strip().eq("+")]
+        elsewhere = {}
+        for sid_, att_ in zip(wk["_sid"], wk["attended_section"].map(clean_section)):
+            if att_:
+                elsewhere.setdefault(sid_, set()).add(att_)
+        present = {sid for sid in section_ids if marks.get((sid, week)) == "+"
+                   and (not elsewhere.get(sid) or elsewhere[sid] & set(secs))}
+        present |= set(results)               # a paper in this session's stack shows the student was there
     seen = present | set(results)
     visitors = {sid for sid in seen if sid in roster and sid not in section_ids}
 
@@ -991,8 +1044,8 @@ def apply_queue(queue: dict) -> dict:
     if target != "quiz" and not quiz:
         quiz = 1                              # single-score components (Midterm, Final) have no item number
     to_write = [DB_FILE]
-    if queue["attendance"].get("processed"):
-        to_write.append(course["workbooks"]["attendance"])
+    if os.path.exists(path(course["workbooks"]["attendance"])):
+        to_write.append(course["workbooks"]["attendance"])    # also written when papers imply presence
     if target == "quiz":
         to_write.append(course["workbooks"]["grades"])
     else:
@@ -1022,7 +1075,7 @@ def apply_queue(queue: dict) -> dict:
                 return 0, missing_signature_fb(target), "graded"
             return results[sid]["score"], results[sid]["feedback"], "graded"
         if quiz and is_p:
-            return 0, no_paper_fb(target), "graded"
+            return 0, no_paper_fb(target), ("graded" if processed else "nopaper")
         if quiz and zero_ok and is_absent(sid) and not existing.get(sid):
             return 0, ABSENT_FB, "absent"
         return None, "", None
@@ -1036,6 +1089,11 @@ def apply_queue(queue: dict) -> dict:
 
     # attendance workbook
     att_file = course["workbooks"]["attendance"]
+    if not processed and os.path.exists(path(att_file)):
+        newly = {sid: "+" for sid in results if ctx["marks"].get((sid, week)) != "+"}
+        if newly:
+            r = xio.write_values(att_file, f"Week #{week}", newly, term=term, course=code)
+            summary["files"][att_file] = {"cells": r["cells"], "students": len(r["students"])}
     if processed and os.path.exists(path(att_file)):
         att, soft = {}, set()
         for sid in active:
@@ -1056,8 +1114,8 @@ def apply_queue(queue: dict) -> dict:
             sc[sid] = s_
             if fb_ok:
                 fb[sid] = f_
-            if kind == "absent":
-                soft.add(sid)
+            if kind in ("absent", "nopaper"):
+                soft.add(sid)                 # inferred zeros never replace a score that is already there
         return sc, fb, soft
 
     # component workbook (Experiment, Homework, Project, Midterm, Final): score column, plus a feedback column
@@ -1159,6 +1217,8 @@ def apply_queue(queue: dict) -> dict:
             has_score = str(db.at[idx, "quiz_score"]).strip() not in ("", "nan", "None")
             if soft_absent and (db.at[idx, "attendance"] == "+" or has_score):
                 continue                      # attended elsewhere / make-up score: keep it
+            if kind == "nopaper" and has_score:
+                continue                      # inferred "no paper" zero: keep the score already recorded
             if mk:
                 db.at[idx, "attendance"] = mk
             db.at[idx, "attended_section"] = attended(sid) if is_p else ""

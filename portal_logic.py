@@ -231,8 +231,9 @@ def build_timeline(rows: pd.DataFrame, status_rows: pd.DataFrame, newest_first: 
             pres = [r for r in recs if str(r.get("attendance")).strip() == "+"]
             attended = next((str(r.get("attended_section") or "").strip() for r in pres
                              if str(r.get("attended_section") or "").strip()), "")
+            # several quizzes in one week: the higher-numbered (later) quiz on top, like the weeks themselves
             quizzes = sorted([r for r in recs if pd.notna(r.get("quiz_n")) and pd.notna(r.get("quiz_score_num"))],
-                             key=lambda r: r["quiz_n"])
+                             key=lambda r: r["quiz_n"], reverse=newest_first)
             items.append({"type": "class", "week_no": int(wk) if wk != -1 else None,
                           "label": str(recs[0].get("week")), "attendance": "+" if pres else "-",
                           "attended_section": attended, "quizzes": quizzes})

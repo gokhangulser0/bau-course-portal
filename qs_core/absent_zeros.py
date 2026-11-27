@@ -107,8 +107,13 @@ def held_weeks(course: dict, d: pd.DataFrame | None = None) -> dict:
     code = course["code"]
     votes: dict = defaultdict(Counter)
     if d is not None and not d.empty:
-        dc = d[(d["_course"] == code) & d["_qn"].notna() & d["_wn"].notna()]
-        for (q, sec), g in dc.groupby(["_qn", "_sec"]):
+        # only graded records (a score, 0 included) show that a quiz was held in a section
+        dc = d[(d["_course"] == code) & d["_qn"].notna() & d["_wn"].notna() & d["_score"].notna()].copy()
+        # the section where the quiz was actually held: a visitor's record names their home section, but the
+        # quiz was given in the session they attended (attended_section)
+        att = dc["attended_section"].map(clean_section) if "attended_section" in dc else dc["_sec"]
+        dc["_held"] = att.where(att.astype(str).str.strip().ne("") & att.notna(), dc["_sec"])
+        for (q, sec), g in dc.groupby(["_qn", "_held"]):
             for w, n in g["_wn"].value_counts().items():
                 votes[("Quiz", int(q), sec)][int(w)] += int(n)
     qdir = path(REVIEW_DIR)
