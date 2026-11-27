@@ -1,4 +1,8 @@
-streamlit
+streamlit>=1.40
 pandas
 openpyxl
 tzdata
+requests
+pypdf
+Pillow
+anthropic

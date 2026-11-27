@@ -1,64 +1,32 @@
 """
-Portal iş mantığı (Streamlit'ten bağımsız, test edilebilir).
-app.py bu modülü import eder; ikisi de repo kökünde aynı klasörde durmalıdır.
+Portal business logic (independent of Streamlit, testable).
+
+app.py and the ui/ package import this module; course rules come from courses_config.json
+(see qs_core/config.py), not from code.
 """
 from __future__ import annotations
 
-import base64
 import html
 import json
 import math
 import os
 import re
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
 
-LOCAL_TZ = "Europe/Istanbul"
-
-
-def _zone(name: str = LOCAL_TZ):
-    """Saat dilimi. Windows'ta tzdata yoksa Türkiye için sabit UTC+3'e düşer (2016'dan beri yaz saati yok)."""
-    try:
-        from zoneinfo import ZoneInfo
-        return ZoneInfo(name)
-    except Exception:
-        return timezone(timedelta(hours=3))
-
+from qs_core.common import LOCAL_TZ, clean_id, clean_section, zone
+from qs_core.common import zone as _zone  # noqa: F401  (kept for backwards compatibility)
 
 STATUS_COLUMNS = ["course_code", "week_no", "section", "note", "created_at"]
-MIN_CLASS_FOR_CHART = 5      # bundan az öğrenci notu olan haftada dağılım grafiği gösterilmez (gizlilik)
-
-# Ders bazlı not hesabı ayarları. Yeni ders için buraya ekle.
-COURSE_CONFIG = {
-    "MCH2008": {
-        "total_quizzes": 9,    # dönem boyunca yapılacak toplam quiz (hafta iptali bunu DEĞİŞTİRMEZ,
-                               # bir derste iki quiz de yapılabilir)
-        "best_quizzes": 7,     # en yüksek kaç quiz sayılır
-        "quiz_pts": 20.0,      # bu en iyi quiz'lerin finale toplam katkısı (puan)
-        "hw_pts": 20.0,        # ödevlerin toplam katkısı (puan)
-        "hw_count": 5,
-    },
-}
+MIN_CLASS_FOR_CHART = 5      # weeks with fewer graded students show no distribution chart (privacy)
 
 
-# ----------------------------------------------------------------------------- temizlik / biçim
+# ----------------------------------------------------------------------------- cleaning / formatting
 def clean_id_str(val) -> str:
-    if val is None or (isinstance(val, float) and math.isnan(val)) or val is pd.NA:
-        return ""
-    s = str(val).split(".")[0].strip()
-    return "".join(ch for ch in s if ch.isdigit())
-
-
-def clean_section(val) -> str:
-    if val is None or (isinstance(val, float) and math.isnan(val)) or val is pd.NA:
-        return ""
-    s = str(val).strip()
-    if re.fullmatch(r"\d+\.0+", s):
-        s = s.split(".")[0]
-    return "" if s.lower() in ("nan", "none", "<na>") else s
+    return clean_id(val)
 
 
 def week_number(label):
@@ -67,8 +35,7 @@ def week_number(label):
 
 
 def safe_html(text) -> str:
-    """Kullanıcı/LLM metnini HTML kutusu içinde güvenle göstermek için kaçırır.
-    Böylece 'N*m' gibi ifadeler italik olmaz, '$' LaTeX'e dönmez, '<' etiket sayılmaz."""
+    """Escape user/LLM text for HTML boxes: 'N*m' stays plain, '$' never becomes LaTeX, '<' is not a tag."""
     if text is None or (isinstance(text, float) and math.isnan(text)):
         return ""
     s = html.escape(str(text).strip(), quote=True)
@@ -78,41 +45,43 @@ def safe_html(text) -> str:
 
 
 def half_up(x: float) -> int:
-    """77.5 -> 78 (Python'un round'u 76.5 -> 76 yapar; öğrenci açısından yarım puan yukarı yuvarlanır)."""
+    """77.5 -> 78 (Python's round() would give 76.5 -> 76; students get the half point)."""
     return int(math.floor(float(x) + 0.5))
 
 
 def fmt_num(x, decimals: int = 1) -> str:
-    """Tam sayıysa tam sayı, değilse ondalıklı göster. Asla kesme (truncate) yapmaz."""
+    """Whole numbers without decimals, otherwise `decimals` places. Never truncates."""
     x = float(x)
     if abs(x - round(x)) < 1e-9:
         return str(int(round(x)))
     return f"{x:.{decimals}f}"
 
 
-# ----------------------------------------------------------------------------- veri yükleme
+# ----------------------------------------------------------------------------- database
 def load_database(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
         return pd.DataFrame()
-    df = pd.read_excel(path)
+    df = pd.read_excel(path, dtype={"student_id": str})
     if df.empty:
         return df
     df["quiz_score_num"] = pd.to_numeric(df["quiz_score"], errors="coerce")
-    df["student_id"] = df["student_id"].apply(clean_id_str)
+    df["student_id"] = df["student_id"].apply(clean_id)
     df["section"] = df["section"].apply(clean_section)
     df["course_code"] = df["course_code"].astype(str).str.strip()
     df["week_no"] = pd.to_numeric(df["week"].astype(str).str.extract(r"(\d+)")[0], errors="coerce")
-    df["quiz_n"] = pd.to_numeric(df["quiz_no"].astype(str).str.extract(r"(\d+)")[0], errors="coerce")  # "No Quiz" -> NaN
+    df["quiz_n"] = pd.to_numeric(df["quiz_no"].astype(str).str.extract(r"(\d+)")[0], errors="coerce")
     if "attended_section" not in df.columns:
         df["attended_section"] = ""
     df["attended_section"] = df["attended_section"].apply(clean_section)
+    if "updated_at" not in df.columns:
+        df["updated_at"] = None
     return _dedupe(df)
 
 
 def _dedupe(df: pd.DataFrame) -> pd.DataFrame:
-    """Satır kimliği = (ders, öğrenci, hafta, quiz). Bir haftada birden fazla quiz satırı olabilir.
-    * Aynı haftada gerçek bir quiz satırı varsa eski 'No Quiz' satırı gereksizdir, atılır.
-    * Aynı quiz için tekrar eden satırlarda notu olan ve '+' olan tercih edilir."""
+    """Row identity = (course, student, week, quiz). A week may hold more than one quiz row.
+    * If a week already has a real quiz row, the old 'No Quiz' row is dropped.
+    * Among duplicates of the same quiz, the row with a score and '+' wins."""
     d = df.assign(_wk=df["week_no"].fillna(-1), _has_q=df["quiz_n"].notna(),
                   _has_score=df["quiz_score_num"].notna(),
                   _pres=df["attendance"].astype(str).str.strip().eq("+"), _i=range(len(df)))
@@ -124,6 +93,7 @@ def _dedupe(df: pd.DataFrame) -> pd.DataFrame:
     return d.drop(columns=["_wk", "_has_q", "_has_score", "_pres", "_i"]).reset_index(drop=True)
 
 
+# ----------------------------------------------------------------------------- "No Class" entries
 def empty_status() -> pd.DataFrame:
     return pd.DataFrame({c: pd.Series(dtype="object") for c in STATUS_COLUMNS}).astype({"week_no": "int64"})
 
@@ -147,7 +117,7 @@ def load_status(path: str) -> pd.DataFrame:
 
 
 def apply_status(df: pd.DataFrame, status: pd.DataFrame):
-    """'No Class' işaretli (ders, hafta, şube) satırlarını veritabanından çıkarır. (aktif_df, gizlenen_satır_sayısı)"""
+    """Remove (course, week, section) rows marked 'No Class'. Returns (active_df, hidden_row_count)."""
     if df.empty or status.empty:
         return df, 0
     keys = set(zip(status["course_code"], status["week_no"], status["section"]))
@@ -159,9 +129,40 @@ def apply_status(df: pd.DataFrame, status: pd.DataFrame):
     return df[~mask].copy(), int(mask.sum())
 
 
+def add_status(status: pd.DataFrame, course: str, week_no: int, sections, note: str, now=None) -> pd.DataFrame:
+    now = now or datetime.now(zone())
+    new = pd.DataFrame([{
+        "course_code": course, "week_no": int(week_no), "section": clean_section(s),
+        "note": (note or "").strip(), "created_at": now.isoformat(timespec="seconds"),
+    } for s in sections], columns=STATUS_COLUMNS)
+    keys = set(zip(new["course_code"], new["week_no"], new["section"]))
+    keep = status[[(c, w, s) not in keys for c, w, s in
+                   zip(status["course_code"], status["week_no"], status["section"])]]
+    out = pd.concat([keep, new], ignore_index=True) if len(keep) else new
+    return out.sort_values(["course_code", "week_no", "section"]).reset_index(drop=True)
+
+
+def remove_status(status: pd.DataFrame, keys) -> pd.DataFrame:
+    keys = set(keys)
+    keep = [(c, int(w), s) not in keys for c, w, s in
+            zip(status["course_code"], status["week_no"], status["section"])]
+    return status[keep].reset_index(drop=True)
+
+
+def status_to_csv_bytes(status: pd.DataFrame) -> bytes:
+    return status[STATUS_COLUMNS].to_csv(index=False).encode("utf-8")
+
+
+def write_status(path: str, status: pd.DataFrame) -> None:
+    from qs_core import backup
+    backup.backup_file(path, course="GLOBAL")
+    with open(path, "wb") as f:
+        f.write(status_to_csv_bytes(status))
+
+
+# ----------------------------------------------------------------------------- statistics
 def class_stats(df: pd.DataFrame) -> dict:
-    """(ders, quiz_no) -> ortalama, medyan, öğrenci sayısı, notlar, hafta. Tek seferde groupby ile hesaplanır.
-    Anahtar hafta değil quiz numarasıdır; böylece bir haftada iki quiz olabilir."""
+    """(course, quiz_no) -> mean, median, n, scores, week. Keyed by quiz number, so a week may have two quizzes."""
     out = {}
     if df.empty:
         return out
@@ -175,7 +176,7 @@ def class_stats(df: pd.DataFrame) -> dict:
 
 
 def week_attendance(df: pd.DataFrame) -> pd.DataFrame:
-    """Haftada iki quiz satırı olsa bile her öğrenci o hafta için TEK yoklama kaydı sayılır ('+' varsa '+')."""
+    """One attendance record per student per week even when the week has two quiz rows ('+' wins)."""
     if df.empty:
         return df
     d = df.assign(_pres=df["attendance"].astype(str).str.strip().eq("+"))
@@ -187,7 +188,7 @@ def week_attendance(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def student_quiz_scores(rows: pd.DataFrame) -> dict:
-    """{quiz_no: puan} - her quiz bir kez sayılır."""
+    """{quiz_no: score}; every quiz counts once."""
     out = {}
     if rows.empty:
         return out
@@ -198,7 +199,7 @@ def student_quiz_scores(rows: pd.DataFrame) -> dict:
 
 
 def held_quizzes(df: pd.DataFrame, course: str, section: str) -> set:
-    """Bu ders+şubede şimdiye kadar yapılmış (kaydı girilmiş) quiz numaraları."""
+    """Quiz numbers already held (recorded) in this course + section."""
     if df.empty:
         return set()
     m = (df["course_code"] == course) & df["quiz_n"].notna()
@@ -207,14 +208,22 @@ def held_quizzes(df: pd.DataFrame, course: str, section: str) -> set:
     return {int(q) for q in df.loc[m, "quiz_n"]}
 
 
+def student_attendance(rows: pd.DataFrame) -> tuple[int, int]:
+    """(weeks attended, weeks held) for one student's active (non-cancelled) rows."""
+    if rows.empty:
+        return 0, 0
+    wk = week_attendance(rows)
+    return int((wk["attendance"] == "+").sum()), int(len(wk))
+
+
 def student_section(rows: pd.DataFrame) -> str:
     secs = [s for s in rows["section"] if s] if not rows.empty else []
     return Counter(secs).most_common(1)[0][0] if secs else ""
 
 
-# ----------------------------------------------------------------------------- zaman çizelgesi
+# ----------------------------------------------------------------------------- weekly timeline
 def build_timeline(rows: pd.DataFrame, status_rows: pd.DataFrame, newest_first: bool = True) -> list:
-    """Haftalık kartlar. Bir haftada birden fazla quiz varsa tek kartta birden fazla quiz satırı olur."""
+    """Weekly cards. A week with more than one quiz gets several quiz lines in one card."""
     items = []
     if not rows.empty:
         for wk, g in rows.groupby(rows["week_no"].fillna(-1), sort=False):
@@ -236,27 +245,7 @@ def build_timeline(rows: pd.DataFrame, status_rows: pd.DataFrame, newest_first: 
     return numbered + unnumbered
 
 
-# ----------------------------------------------------------------------------- not hesabı / what-if
-def quiz_points(scores, best: int, pts: float) -> float:
-    top = sorted((float(s) for s in scores), reverse=True)[:best]
-    return sum(top) * pts / best / 100.0
-
-
-def remaining_quizzes(cfg: dict, held_quizzes) -> int:
-    """Kalan quiz = toplam quiz - şimdiye kadar yapılan quiz. Hafta iptalleri toplamı etkilemez."""
-    return max(0, cfg["total_quizzes"] - len(set(int(q) for q in held_quizzes)))
-
-
-def what_if(existing_scores, remaining: int, future_avg: float, cfg: dict) -> dict:
-    best, pts = cfg["best_quizzes"], cfg["quiz_pts"]
-    existing = list(existing_scores)
-    return {
-        "current": quiz_points(existing, best, pts),
-        "projected": quiz_points(existing + [float(future_avg)] * remaining, best, pts),
-        "max": quiz_points(existing + [100.0] * remaining, best, pts),
-    }
-
-
+# ----------------------------------------------------------------------------- charts
 def trend_frame(rows: pd.DataFrame, stats: dict, course: str) -> pd.DataFrame:
     recs = []
     for q, score in sorted(student_quiz_scores(rows).items()):
@@ -282,69 +271,24 @@ def histogram(scores, width: int = 10) -> pd.DataFrame:
     return pd.DataFrame({"bin": labels, "count": counts, "start": [i * width for i in range(n_bins)]})
 
 
-# ----------------------------------------------------------------------------- zaman damgası
+# ----------------------------------------------------------------------------- timestamps
 def last_updated(db_path: str, meta_path: str | None = None, tz: str = LOCAL_TZ):
-    zone = _zone(tz)
+    z = zone(tz)
     if meta_path and os.path.exists(meta_path):
         try:
             with open(meta_path, encoding="utf-8") as f:
                 dt = datetime.fromisoformat(json.load(f)["db_updated"])
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=zone)
-            return dt.astimezone(zone)
+                dt = dt.replace(tzinfo=z)
+            return dt.astimezone(z)
         except Exception:
             pass
     if os.path.exists(db_path):
-        return datetime.fromtimestamp(os.path.getmtime(db_path), tz=zone)
+        return datetime.fromtimestamp(os.path.getmtime(db_path), tz=z)
     return None
-
-
-# ----------------------------------------------------------------------------- "No Class" kayıtları
-def add_status(status: pd.DataFrame, course: str, week_no: int, sections, note: str, now=None) -> pd.DataFrame:
-    now = now or datetime.now(_zone())
-    new = pd.DataFrame([{
-        "course_code": course, "week_no": int(week_no), "section": clean_section(s),
-        "note": (note or "").strip(), "created_at": now.isoformat(timespec="seconds"),
-    } for s in sections], columns=STATUS_COLUMNS)
-    keys = set(zip(new["course_code"], new["week_no"], new["section"]))
-    keep = status[[(c, w, s) not in keys for c, w, s in
-                   zip(status["course_code"], status["week_no"], status["section"])]]
-    out = pd.concat([keep, new], ignore_index=True) if len(keep) else new
-    return out.sort_values(["course_code", "week_no", "section"]).reset_index(drop=True)
-
-
-def remove_status(status: pd.DataFrame, keys) -> pd.DataFrame:
-    keys = set(keys)
-    keep = [(c, int(w), s) not in keys for c, w, s in
-            zip(status["course_code"], status["week_no"], status["section"])]
-    return status[keep].reset_index(drop=True)
-
-
-def status_to_csv_bytes(status: pd.DataFrame) -> bytes:
-    return status[STATUS_COLUMNS].to_csv(index=False).encode("utf-8")
-
-
-def write_status(path: str, status: pd.DataFrame) -> None:
-    with open(path, "wb") as f:
-        f.write(status_to_csv_bytes(status))
 
 
 def github_put_file(token: str, repo: str, path: str, content: bytes, message: str,
                     branch: str = "main", timeout: int = 20) -> None:
-    """GitHub Contents API ile dosyayı repoya commit eder (yoksa oluşturur, varsa günceller)."""
-    import requests
-    url = f"https://api.github.com/repos/{repo}/contents/{path}"
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
-    r = requests.get(url, headers=headers, params={"ref": branch}, timeout=timeout)
-    if r.status_code == 200:
-        sha = r.json().get("sha")
-    elif r.status_code == 404:
-        sha = None
-    else:
-        raise RuntimeError(f"GitHub okuma hatası {r.status_code}: {r.text[:200]}")
-    payload = {"message": message, "content": base64.b64encode(content).decode("ascii"), "branch": branch}
-    if sha:
-        payload["sha"] = sha
-    r = requests.put(url, headers=headers, json=payload, timeout=timeout)
-    if r.status_code not in (200, 201):
-        raise RuntimeError(f"GitHub yazma hatası {r.status_code}: {r.text[:200]}")
+    from qs_core.gitops import github_put_file as _put
+    _put(token, repo, path, content, message, branch=branch, timeout=timeout)

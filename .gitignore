@@ -1,4 +1,26 @@
-﻿input/
+input/
 process_week.py
 *_attendance.xlsx
 *_grades.xlsx
+# local-only working data
+backups/
+archives/
+review_queue/
+billing_ledger.json
+*.tmp
+~$*.xlsx
+__pycache__/
+.streamlit/secrets.toml
+legacy/
+term_archive/
+revision_log.json
+
+# raw university roster exports (student data)
+*Not Excel Raporu*.xlsx
+# official quiz solutions and rubric (local grading only)
+rubric.txt
+# temporary database file, local environments, one-time cleanup script
+*.tmp.xlsx
+.env
+.venv/
+cleanup_workspace.py
