@@ -11,6 +11,7 @@ from qs_core import billing
 from qs_core import config as cfgmod
 from qs_core import gitops
 from qs_core import grader
+from qs_core import jobs
 from qs_core.common import DB_FILE, INPUT_DIR, META_FILE, RUBRIC_FILE, clean_id, path
 
 from . import common as ui
@@ -53,6 +54,8 @@ def _file_table(infos, role):
 def grading_tab(cfg):
     ui.page_header("AI Grading", "Attendance sheets, quizzes and experiment handouts graded with Claude. Results "
                    "wait in Review & Publish until you approve them.")
+    if _run_panel():
+        return                                   # one run at a time: the form comes back when it finishes
     codes = cfgmod.all_courses(cfg)
     if not codes:
         st.info("Create a course on Courses & Criteria first.")
@@ -203,6 +206,21 @@ def grading_tab(cfg):
     if ec is not None and not os.path.exists(path(ec["workbook"])):
         st.warning(f"{ec['workbook']} does not exist yet. Create it on Courses & Criteria (Workbooks) before "
                    f"approving the results.")
+    if number and not att:
+        wa = grader.week_attendance(c, section, week)
+        if wa["present"] or wa["absent"]:
+            st.info(f"No attendance sheet in this run: the attendance already recorded for Week {week} is used "
+                    f"({wa['present']} present, {wa['absent']} absent of {wa['students']}). Present students "
+                    f"without a paper get 0 (no submission); absent students get 0. If this quiz was given in "
+                    f"another class session, upload that session's attendance sheet instead.")
+        else:
+            st.warning(f"No attendance is recorded for Week {week} yet and none is uploaded: only the papers are "
+                       f"graded and nobody gets an automatic 0. Upload the attendance sheet to record attendance.")
+    dups = grader.same_scans(papers) if number else []
+    if dups:
+        st.warning("These scans were already graded: " + "; ".join(f"{d['file']} in {d['run']}" for d in dups[:4])
+                   + ". Check the week and the item number before you grade them again.")
+        ack = ack and st.checkbox("Grade these scans again anyway.", key="gr_dup_ok")
 
     if st.button("Start grading", type="primary", disabled=not (api_key and ack)):
         if save_rubric and rubric.strip():
@@ -214,45 +232,83 @@ def grading_tab(cfg):
                                 model=model, rubric=rubric, attendance_files=att,
                                 quiz_files=papers if number else [], question_file=question if number else None,
                                 pages_per_paper=int(ppp), target=target)
-        run_live(job, api_key, est)
+        try:
+            st.session_state["grading_run"] = jobs.start(job, api_key)
+            st.session_state["grading_est"] = est.cost_usd
+        except ValueError as e:
+            st.error(str(e))
+            return
+        st.rerun()
 
 
-def run_live(job, api_key, est):
-    st.markdown("##### Live progress")
-    bar = st.progress(0.0, text="Starting...")
-    k1, k2, k3, k4, k5 = st.columns(5)
-    ph = [k.empty() for k in (k1, k2, k3, k4, k5)]
-    log_box = st.empty()
-    lines = []
+def _run_panel() -> bool:
+    """Progress of the background grading run. True while a run is still going."""
+    rid = st.session_state.get("grading_run")
+    r = jobs.get(rid) if rid else jobs.active()
+    if not r:
+        return False
+    st.session_state["grading_run"] = r["id"]
+    if r["status"] == "running":
+        _live_panel(r["id"])
+        return True
+    _render_run(r["id"])
+    return False
 
-    def on_event(ev):
-        u = ev["usage"]
-        frac = ev["done"] / ev["total"] if ev["total"] else 0
-        stage = {"attendance": "Attendance", "paper": "Quiz papers", "rubric": "Rubric"}.get(ev["type"], ev["type"])
-        bar.progress(min(frac, 1.0), text=f"{stage}: {ev['done']}/{ev['total']}")
-        ph[0].metric("Processed", f"{ev['done']}/{ev['total']} {stage.lower()}")
-        ph[1].metric("Input tokens", f"{u['input_tokens']:,}")
-        ph[2].metric("Output tokens", f"{u['output_tokens']:,}")
-        ph[3].metric("Cache read / write", f"{u['cache_read_tokens']:,} / {u['cache_write_tokens']:,}")
-        ph[4].metric("Cost so far", f"${u['cost_usd']:.3f}", f"estimate ${est.cost_usd:.3f}", delta_color="off")
-        lines.append(ev["message"])
-        log_box.code("\n".join(lines[-10:]), language=None)
 
-    try:
-        q = grader.run_grading(job, api_key, on_event)
-    except Exception as e:  # noqa: BLE001
-        st.error(f"Grading failed: {e}")
+def _render_run(rid):
+    r = jobs.get(rid)
+    if not r:
         return
-    bar.progress(1.0, text="Done")
-    st.session_state["review_qid"] = q["id"]
-    n_open = len(grader.open_flags(q))
-    if q["status"] == "stopped":
-        st.warning(" ".join(q["notes"]))
-    st.success(f"Grading finished: {len(q['papers'])} paper(s), {len(q['attendance']['present'])} present, "
-               f"cost ${q['usage'].get('cost_usd', 0):.3f}. {n_open} flag(s) need review. "
-               f"Open **Review & Publish** to check and approve the results.")
-    if q.get("archived_pdfs"):
-        st.caption("PDFs saved to the term archive: " + ", ".join(q["archived_pdfs"]))
+    est = st.session_state.get("grading_est")
+    u = r.get("usage") or {}
+    st.markdown(f"##### Grading run · {r['label']}")
+    frac = r["done"] / r["total"] if r["total"] else 0.0
+    bar_text = f"{r['stage']}: {r['done']}/{r['total']}" if r["total"] else r["stage"]
+    st.progress(1.0 if r["status"] != "running" else min(frac, 1.0),
+                text="Done" if r["status"] == "done" else bar_text)
+    elapsed = int((r["finished"] or __import__("time").time()) - r["started"])
+    ui.metric_grid([
+        ui.metric_card("Processed", f"{r['done']}/{r['total']}" if r["total"] else "—", r["stage"].lower()),
+        ui.metric_card("Time", f"{elapsed // 60}:{elapsed % 60:02d}"),
+        ui.metric_card("Input tokens", f"{u.get('input_tokens', 0):,}",
+                       f"cache {u.get('cache_read_tokens', 0):,} read / {u.get('cache_write_tokens', 0):,} write"),
+        ui.metric_card("Output tokens", f"{u.get('output_tokens', 0):,}"),
+        ui.metric_card("Cost so far", f"${u.get('cost_usd', 0):.3f}",
+                       f"estimate ${est:.3f}" if isinstance(est, (int, float)) else ""),
+    ])
+    if r["lines"]:
+        st.code("\n".join(r["lines"][-10:]), language=None)
+    if r["status"] == "running":
+        st.caption("The run continues in the background: you can switch pages or reload; come back here to "
+                   "follow it. Keep this app (the run_desktop window) open until it finishes.")
+        if st.button("Stop after the papers already sent", key=f"gr_stop_{rid}"):
+            jobs.stop(rid)
+        return
+    res = r.get("result") or {}
+    if r["status"] == "failed":
+        st.error(f"Grading failed: {r.get('error')}")
+    else:
+        st.session_state["review_qid"] = res.get("id")
+        if res.get("status") == "stopped":
+            st.warning(" ".join(res.get("notes") or []))
+        st.success(f"Grading finished: {res.get('papers', 0)} paper(s), {res.get('present', 0)} present, "
+                   f"cost ${res.get('usage', {}).get('cost_usd', 0):.3f}. {res.get('open_flags', 0)} flag(s) "
+                   f"need review. Open **Review & Publish** to check and approve the results.")
+        if res.get("archived_pdfs"):
+            st.caption("PDFs saved to the term archive: " + ", ".join(res["archived_pdfs"]))
+    if st.button("Start another run", key=f"gr_new_{rid}"):
+        st.session_state.pop("grading_run", None)
+        st.rerun()
+
+
+def _live(rid):
+    r = jobs.get(rid)
+    if r and r["status"] != "running":
+        st.rerun()                               # finished: redraw the whole page once
+    _render_run(rid)
+
+
+_live_panel = st.fragment(run_every=2)(_live) if hasattr(st, "fragment") else _live
 
 
 # ----------------------------------------------------------------------------- review

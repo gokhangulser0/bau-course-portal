@@ -227,3 +227,23 @@ workbooks follow the database (`qs_core/db_sync.py`); the database is only read.
   **Sync Workbooks from Database** (preview, confirm, write). Command line: `python sync_workbooks.py [--apply]`.
 * Grade Revision reads quiz scores and feedback from the database first.
 * Sync Absent Zeros keeps the database's own note (e.g. "signature missing") when the database already has 0.
+
+## 14. Faster, cheaper grading (27 Nov 2026)
+
+Measured before the change (MCH2008 Week 1 Quiz 1, 35 papers, Sonnet 4.6): ~1,100 output tokens and ~23 s per
+paper, $0.84 per run, 2 papers unparseable. Causes: the rubric's own "Output format" section made the model
+write a text report before the JSON, a 17-item breakdown, sequential calls, runs cut off by page clicks.
+
+* **Forced tool output** (`grader.grade_tool`, `ATTENDANCE_TOOL`, `grade_call`): the model can only answer
+  through `submit_grade` / `submit_attendance`, so there is no preamble and no JSON parse error.
+* **Breakdown per rubric part** (A, B, C, ...), not per sub-item. Flags and review work as before.
+* **Rubric output-format sections are removed from the prompt** (`grader.strip_output_format`); `rubric.txt`
+  itself is not changed. Scoring rules, solution and points stay.
+* **Parallel papers**: `parallel_papers` (default 4, Billing & Settings -> Thresholds). API calls run in worker
+  threads; results, the live counter and the cost/token caps are handled in one place. The SDK retries 429/529.
+* **Background runs** (`qs_core/jobs.py`): a run continues when the page reruns or you switch pages; one run at
+  a time; **Stop** keeps the papers graded so far. Runs saved as "running" that are no longer active (e.g.
+  the app was closed) are shown as "stopped".
+* **Same-scan warning**: every run stores the SHA-1 of its scans (`file_hashes`); grading the same PDF again
+  (e.g. under another week or quiz number) needs an explicit confirmation.
+* `temperature` is tried once per model per session.

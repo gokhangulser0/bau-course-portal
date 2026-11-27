@@ -149,17 +149,21 @@ def match_to_roster(raw_id, roster_ids) -> tuple[str, str]:
 
 
 # ----------------------------------------------------------------------------- Claude client
+# models that rejected 'temperature' during this desktop session (asked only once per model)
+_NO_TEMPERATURE: set = set()
+
+
 class ClaudeClient:
     def __init__(self, api_key: str, model: str, tracker: billing.UsageTracker):
         from anthropic import Anthropic
-        self.client = Anthropic(api_key=api_key)
+        # several papers run in parallel: let the SDK wait and retry on rate limits (429) and overload (529)
+        self.client = Anthropic(api_key=api_key, max_retries=6)
         self.model = model
         self.tracker = tracker
-        self.use_temperature = True
         self.notes = []
 
     def create(self, **kwargs):
-        if self.use_temperature:
+        if self.model not in _NO_TEMPERATURE:
             try:
                 resp = self.client.messages.create(model=self.model, temperature=0, **kwargs)
                 self.tracker.add(resp)
@@ -167,12 +171,98 @@ class ClaudeClient:
             except Exception as e:  # noqa: BLE001
                 if "temperature" not in str(e).lower():
                     raise
-                self.use_temperature = False
-                self.notes.append("This model/SDK does not accept 'temperature'; continuing without it "
-                                  "(results may vary slightly between runs).")
+                _NO_TEMPERATURE.add(self.model)
+                note = ("This model does not accept 'temperature'; continuing without it "
+                        "(results may vary slightly between runs).")
+                if note not in self.notes:
+                    self.notes.append(note)
         resp = self.client.messages.create(model=self.model, **kwargs)
         self.tracker.add(resp)
         return resp
+
+
+def _tool_input(resp, name: str):
+    """Arguments of the forced tool call, or None."""
+    for b in getattr(resp, "content", None) or []:
+        if getattr(b, "type", "") == "tool_use" and getattr(b, "name", "") == name:
+            return dict(b.input or {})
+    return None
+
+
+ISSUE_CODES = ["unreadable_id", "ambiguous_handwriting", "missing_pages", "incomplete_scan", "blank_page",
+               "wrong_quiz"]
+
+
+def grade_tool(fb_ok: bool = True) -> dict:
+    """Forced tool: the model can only answer with these fields (no preamble, no thinking out loud)."""
+    props = {
+        "student_id": {"type": "string", "description": "Digits only: the matched valid ID, or the digits as read."},
+        "id_confidence": {"type": "number", "description": "0.0-1.0"},
+        "quiz_score": {"type": "number", "description": "0-100; equals the sum of breakdown.awarded."},
+        "score_confidence": {"type": "number", "description": "0.0-1.0"},
+        "breakdown": {"type": "array", "description": "One entry per rubric PART (A, B, C, ...), not per sub-item.",
+                      "items": {"type": "object",
+                                "properties": {"part": {"type": "string"}, "max": {"type": "number"},
+                                               "awarded": {"type": "number"}},
+                                "required": ["part", "max", "awarded"]}},
+        "issues": {"type": "array", "items": {"type": "string", "enum": ISSUE_CODES}},
+    }
+    if fb_ok:
+        props["feedback"] = {"type": "string",
+                             "description": "2-3 short, plain sentences to the student ('You ...'); name deductions."}
+    return {"name": "submit_grade", "description": "Submit the grade for this paper. Call it exactly once.",
+            "input_schema": {"type": "object", "properties": props, "required": list(props)}}
+
+
+ATTENDANCE_TOOL = {
+    "name": "submit_attendance", "description": "Submit the signatures found on this attendance page.",
+    "input_schema": {"type": "object", "properties": {
+        "present_ids": {"type": "array", "items": {"type": "string"},
+                        "description": "IDs of signed rows and clearly written added IDs."},
+        "uncertain_ids": {"type": "array", "items": {"type": "string"},
+                          "description": "Handwritten IDs you could not read with certainty, as read."}},
+        "required": ["present_ids", "uncertain_ids"]}}
+
+
+def grade_call(client: "ClaudeClient", system: str, tool: dict, b64_pdf: str, text: str,
+               max_tokens: int = 1024) -> dict:
+    """One paper -> result dict. The system prompt (rubric + roster) is cached across papers."""
+    resp = client.create(
+        max_tokens=max_tokens,
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        tools=[tool], tool_choice={"type": "tool", "name": tool["name"]},
+        messages=[{"role": "user", "content": [
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64_pdf}},
+            {"type": "text", "text": text}]}])
+    res = _tool_input(resp, tool["name"])
+    if res is None:
+        res = _parse_json(_text(resp))
+    if not isinstance(res, dict):
+        raise ValueError("The model did not return a grade object.")
+    if getattr(resp, "stop_reason", "") == "max_tokens":
+        raise ValueError("The answer was cut off (max_tokens). Re-grade this paper.")
+    return res
+
+
+_OUTPUT_HINT = re.compile(r"(output\s+format|json\s+template|strict\s+output|output\s+only)", re.I)
+
+
+def strip_output_format(rubric: str) -> str:
+    """Remove the rubric's own output-format instructions (they make the model write a long text report
+    before the answer). Scoring rules, solution and point distribution are kept."""
+    lines, out, skipping = rubric.splitlines(), [], False
+    for ln in lines:
+        bare = ln.strip()
+        if _OUTPUT_HINT.search(bare) and not re.search(r"\d+\s*(pts|points)", bare, re.I):
+            skipping = True
+            continue
+        if skipping:
+            if not bare or ln[:1].isspace():
+                continue                      # the indented template under the heading
+            skipping = False
+        out.append(ln)
+    text = "\n".join(out)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _text(resp) -> str:
@@ -265,8 +355,16 @@ OUTPUT ONLY a JSON object:
 {"present_ids": ["2202739", "2366349"], "uncertain_ids": ["22O2739"], "notes": "optional short note"}"""
 
 
-def quiz_system_prompt(course: str, section: str, quiz: int, rubric: str, roster_ids, target: str = "quiz") -> str:
+def quiz_system_prompt(course: str, section: str, quiz: int, rubric: str, roster_ids, target: str = "quiz",
+                       fb_ok: bool = True) -> str:
     ids = ", ".join(sorted(roster_ids)) if roster_ids else "N/A"
+    rubric = strip_output_format(rubric)
+    feedback = ("""
+FEEDBACK:
+- Write directly to the student in second person ("You...", "Your...") as their course instructor.
+- Never use third-person phrasing such as "The student...".
+- 2 to 3 short sentences in simple, plain English. Mention any deductions explicitly.
+""" if fb_ok else "")
     if target == "quiz":
         item = f"Quiz #{quiz}"
     elif target == "experiment":
@@ -278,9 +376,8 @@ def quiz_system_prompt(course: str, section: str, quiz: int, rubric: str, roster
 RUBRIC & OFFICIAL SOLUTION:
 {rubric}
 
-NOTE ON OUTPUT FORMAT: The rubric above may describe its own output format. Use the rubric ONLY for the
-solution, point distribution and grading policy (error carried forward, tolerances, sign/axis conventions,
-unit slips). Your final output MUST be the JSON template below and nothing else.
+Use the rubric ONLY for the solution, point distribution and grading policy (error carried forward,
+tolerances, sign/axis conventions, unit slips). Ignore any output format it describes.
 
 STUDENT ID:
 - Read the handwritten 'Student ID (Öğrenci No):' in the paper header carefully.
@@ -292,32 +389,17 @@ STUDENT ID:
 SCORING ACCURACY & CONSISTENCY:
 - Base the final score on 100 points total.
 - The final "quiz_score" MUST equal 100 minus the exact sum of the deductions stated in your feedback.
-- "breakdown" lists every rubric part with its maximum and awarded points; the awarded points MUST add up to "quiz_score".
+- "breakdown" has ONE entry per rubric part (A, B, C, ...) with that part's maximum and awarded points
+  (do not list sub-items); the awarded points MUST add up to "quiz_score".
 - Be fair and generous with partial credit for correct methodology, equations and problem-solving steps.
 - Apply error carried forward strictly: never penalize the same mistake twice.
 - Report how sure you are about the score in "score_confidence" (0.0-1.0). Lower it when handwriting is ambiguous.
-
-FEEDBACK:
-- Write directly to the student in second person ("You...", "Your...") as their course instructor.
-- Never use third-person phrasing such as "The student...".
-- 2 to 3 short sentences in simple, plain English. Mention any deductions explicitly.
-
+{feedback}
 ISSUES: list any of these codes that apply, otherwise an empty list:
 unreadable_id, ambiguous_handwriting, missing_pages, incomplete_scan, blank_page, wrong_quiz
 (use wrong_quiz when the paper does not match this quiz / experiment)
 
-STRICT OUTPUT: no introduction, no markdown, no thinking out loud. Start with '{{' and end with '}}'.
-
-JSON TEMPLATE:
-{{
-  "student_id": "ONLY_DIGITS",
-  "id_confidence": 0.0,
-  "quiz_score": 0,
-  "score_confidence": 0.0,
-  "breakdown": [{{"part": "A", "max": 25, "awarded": 20}}],
-  "issues": [],
-  "feedback": "2 to 3 simple sentences directly to the student."
-}}"""
+OUTPUT: grade silently and call the submit_grade tool exactly once. Do not write any other text."""
 
 
 def generate_rubric(client: ClaudeClient, course: str, name: str, data: bytes) -> str:
@@ -442,8 +524,21 @@ def save_queue(queue: dict) -> str:
     return write_json(queue_path(queue["id"]), queue, backup=False)
 
 
+def _mark_interrupted(q: dict) -> dict:
+    """A run saved as 'running' that no longer runs in the background was cut off (page closed or the app
+    restarted). Show it as stopped so the papers graded so far can still be reviewed."""
+    if q and q.get("status") == "running":
+        from . import jobs
+        if not jobs.is_running(q.get("id", "")):
+            q["status"] = "stopped"
+            note = "This run was interrupted before it finished. The papers graded so far are kept for review."
+            if note not in q.setdefault("notes", []):
+                q["notes"].append(note)
+    return q
+
+
 def load_queue(qid: str) -> dict | None:
-    return read_json(queue_path(qid), None)
+    return _mark_interrupted(read_json(queue_path(qid), None))
 
 
 def list_queues() -> list[dict]:
@@ -455,7 +550,7 @@ def list_queues() -> list[dict]:
         if name.endswith(".json"):
             q = read_json(os.path.join(d, name), None)
             if q:
-                out.append(q)
+                out.append(_mark_interrupted(q))
     out.sort(key=lambda q: q.get("created_at", ""), reverse=True)
     return out
 
@@ -468,7 +563,37 @@ def queue_label(q: dict) -> str:
 
 
 # ----------------------------------------------------------------------------- run
-def run_grading(job: GradingJob, api_key: str, on_event=None) -> dict:
+class RunCancelled(Exception):
+    """The instructor pressed Stop."""
+
+
+def week_attendance(course: dict, section, week: int) -> dict:
+    """Attendance already recorded for this week in the given section(s): {"present", "absent", "students"}."""
+    from . import absent_zeros as az
+    marks = az.attendance_marks(course, az.prepare_db(dbio.read_records()))
+    secs = sections_of(section)
+    ids = [sid for sid, r in load_roster(course).items() if r["section"] in secs]
+    vals = [marks.get((sid, int(week)), "") for sid in ids]
+    return {"present": vals.count("+"), "absent": vals.count("-"), "students": len(ids)}
+
+
+def file_hash(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha1(data).hexdigest()
+
+
+def same_scans(files) -> list[dict]:
+    """Earlier runs that used exactly the same scanned PDF(s): [{"file", "run"}]."""
+    want = {file_hash(d): n for n, d in files}
+    out = []
+    for q in list_queues():
+        for h, name in (q.get("file_hashes") or {}).items():
+            if h in want:
+                out.append({"file": want[h], "run": queue_label(q)})
+    return out
+
+
+def run_grading(job: GradingJob, api_key: str, on_event=None, cancel=None) -> dict:
     """Grade everything and return a saved review queue (status 'pending_review' or 'stopped')."""
     cfg = cfgmod.load()
     course = cfgmod.course(cfg, job.course)
@@ -488,15 +613,18 @@ def run_grading(job: GradingJob, api_key: str, on_event=None) -> dict:
     queue = {"id": qid, "created_at": now_iso(), "term": course.get("term"), "course": job.course,
              "section": str(job.section), "week": int(job.week), "quiz": job.quiz, "target": job.target, "model": job.model,
              "status": "running", "usage": {}, "notes": [],
+             "file_hashes": {file_hash(d): n for n, d in job.quiz_files},
              "attendance": {"processed": bool(job.attendance_files), "present": [], "unknown": [], "pages": []},
              "papers": []}
 
     def emit(kind, done, total, msg):
         queue["usage"] = tracker.as_dict()
         if on_event:
-            on_event({"type": kind, "done": done, "total": total, "usage": tracker.as_dict(), "message": msg})
+            on_event({"type": kind, "done": done, "total": total, "usage": tracker.as_dict(), "message": msg,
+                      "queue_id": qid})
 
     present = set()
+    emit("start", 0, 0, f"Run {qid} started.")
     try:
         # ---- attendance
         att_pages = [(n, pg) for n, d in job.attendance_files for pg in page_images(d)]
@@ -507,10 +635,17 @@ def run_grading(job: GradingJob, api_key: str, on_event=None) -> dict:
                 emit("attendance", i, len(att_pages), f"{fname} page {pno}: no image layer")
                 continue
             try:
-                resp = client.create(max_tokens=1000, messages=[{"role": "user", "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": mt, "data": b64}},
-                    {"type": "text", "text": ATTENDANCE_PROMPT}]}])
-                obj = _parse_json(_text(resp))
+                if cancel is not None and cancel.is_set():
+                    raise RunCancelled()
+                resp = client.create(
+                    max_tokens=1000, tools=[ATTENDANCE_TOOL],
+                    tool_choice={"type": "tool", "name": ATTENDANCE_TOOL["name"]},
+                    messages=[{"role": "user", "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": mt, "data": b64}},
+                        {"type": "text", "text": ATTENDANCE_PROMPT}]}])
+                obj = _tool_input(resp, ATTENDANCE_TOOL["name"])
+                if obj is None:
+                    obj = _parse_json(_text(resp))
                 ids = obj.get("present_ids", obj) if isinstance(obj, dict) else obj
                 unsure = obj.get("uncertain_ids", []) if isinstance(obj, dict) else []
                 for raw in list(ids) + list(unsure):
@@ -522,7 +657,7 @@ def run_grading(job: GradingJob, api_key: str, on_event=None) -> dict:
                                                                "file": fname, "page": pno, "resolved": False})
                 queue["attendance"]["pages"].append({"file": fname, "page": pno, "found": len(ids)})
                 emit("attendance", i, len(att_pages), f"{fname} page {pno}: {len(ids)} signature(s)")
-            except billing.BudgetExceeded:
+            except (billing.BudgetExceeded, RunCancelled):
                 raise
             except Exception as e:  # noqa: BLE001
                 queue["attendance"]["pages"].append({"file": fname, "page": pno, "found": 0, "error": str(e)})
@@ -543,11 +678,13 @@ def run_grading(job: GradingJob, api_key: str, on_event=None) -> dict:
                 tracker.check_caps()
             if not rubric:
                 raise ValueError("No rubric was given and no question sheet was uploaded.")
-            system = quiz_system_prompt(job.course, job.section, job.quiz, rubric, roster_ids, job.target)
+            system = quiz_system_prompt(job.course, job.section, job.quiz, rubric, roster_ids, job.target, fb_ok)
+            tool = grade_tool(fb_ok)
             queue["rubric"] = rubric                    # kept for targeted re-grades
             queue["pages_per_paper"] = int(job.pages_per_paper)
             papers = [(fname, d, part) for fname, d in job.quiz_files
                       for part in split_pdf(d, max(1, job.pages_per_paper))]
+            prepared = []
             for i, (fname, data, (p_from, p_to, b64)) in enumerate(papers, start=1):
                 pid = f"p{i:03d}"
                 prev = save_preview(data, p_from, os.path.join(prev_dir, f"{pid}.jpg"))
@@ -563,38 +700,16 @@ def run_grading(job: GradingJob, api_key: str, on_event=None) -> dict:
                          "paper_pdf": os.path.relpath(pdf_path, path()) if pdf_path else None,
                          "incomplete": (p_to - p_from + 1) < job.pages_per_paper,
                          "excluded": False, "edited": False}
-                try:
-                    resp = client.create(
-                        max_tokens=1500,
-                        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-                        messages=[{"role": "user", "content": [
-                            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
-                                                            "data": b64}},
-                            {"type": "text", "text": "Evaluate this submission. Output ONLY raw JSON matching "
-                                                     "the template."}]}])
-                    res = _parse_json(_text(resp))
-                    sid, how = match_to_roster(res.get("student_id", ""), roster_ids)
-                    paper.update({"raw_id": str(res.get("student_id", "")), "student_id": sid, "id_match": how,
-                                  "score": res.get("quiz_score"),
-                                  "feedback": res.get("feedback", "") if fb_ok else "",
-                                  "id_confidence": res.get("id_confidence"),
-                                  "score_confidence": res.get("score_confidence"),
-                                  "breakdown": res.get("breakdown") or [], "issues": res.get("issues") or []})
-                    msg = f"Paper {i}/{len(papers)}: ID {sid or '?'} · score {res.get('quiz_score')}"
-                except billing.BudgetExceeded:
-                    raise
-                except Exception as e:  # noqa: BLE001
-                    paper.update({"raw_id": "", "student_id": "", "id_match": "missing", "score": None,
-                                  "feedback": "", "error": str(e)})
-                    msg = f"Paper {i}/{len(papers)}: grading error ({e})"
-                queue["papers"].append(paper)
-                emit("paper", i, len(papers), msg)
-                tracker.check_caps()
+                prepared.append((i, paper, b64))
+            _grade_parallel(client, tracker, system, tool, prepared, fb_ok, roster_ids, queue, emit,
+                            int(settings.get("parallel_papers") or 4), cancel)
         queue["status"] = "pending_review"
-    except billing.BudgetExceeded as e:
+    except (billing.BudgetExceeded, RunCancelled) as e:
         queue["status"] = "stopped"
-        queue["notes"].append(str(e))
+        queue["notes"].append(str(e) if isinstance(e, billing.BudgetExceeded)
+                              else "Stopped by the instructor. The papers graded so far are kept for review.")
         queue["attendance"]["present"] = sorted(set(queue["attendance"]["present"]) | present)
+        queue["papers"].sort(key=lambda p: p["pid"])
     finally:
         queue["notes"].extend(client.notes)
         if queue["status"] in ("pending_review", "stopped"):
@@ -614,6 +729,56 @@ def run_grading(job: GradingJob, api_key: str, on_event=None) -> dict:
             billing.record_run(led, tracker, queue_label(queue))
             billing.save_ledger(led)
     return queue
+
+
+def _grade_parallel(client, tracker, system, tool, prepared, fb_ok, roster_ids, queue, emit, workers, cancel):
+    """Grade several papers at the same time. API calls run in worker threads; results, progress events and
+    the budget caps are handled here, one at a time, so the review queue and the live counter stay consistent."""
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+    total = len(prepared)
+    text = "Grade this submission and call submit_grade."
+    todo = iter(prepared)
+    pending, done_n, stop = {}, 0, None
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, 8))) as ex:
+        def fill():
+            while stop is None and len(pending) < max(1, workers):
+                nxt = next(todo, None)
+                if nxt is None:
+                    return
+                pending[ex.submit(grade_call, client, system, tool, nxt[2], text)] = nxt
+        fill()
+        while pending:
+            finished, _ = wait(list(pending), return_when=FIRST_COMPLETED)
+            for f in finished:
+                i, paper, _b64 = pending.pop(f)
+                try:
+                    res = f.result()
+                    sid, how = match_to_roster(res.get("student_id", ""), roster_ids)
+                    paper.update({"raw_id": str(res.get("student_id", "")), "student_id": sid, "id_match": how,
+                                  "score": res.get("quiz_score"),
+                                  "feedback": res.get("feedback", "") if fb_ok else "",
+                                  "id_confidence": res.get("id_confidence"),
+                                  "score_confidence": res.get("score_confidence"),
+                                  "breakdown": res.get("breakdown") or [], "issues": res.get("issues") or []})
+                    msg = f"Paper {i}/{total}: ID {sid or '?'} · score {res.get('quiz_score')}"
+                except Exception as e:  # noqa: BLE001
+                    paper.update({"raw_id": "", "student_id": "", "id_match": "missing", "score": None,
+                                  "feedback": "", "error": str(e)})
+                    msg = f"Paper {i}/{total}: grading error ({e})"
+                queue["papers"].append(paper)
+                done_n += 1
+                emit("paper", done_n, total, msg)
+            if stop is None:
+                try:
+                    tracker.check_caps()
+                except billing.BudgetExceeded as e:
+                    stop = e                  # papers already sent finish; nothing new is sent
+                if cancel is not None and cancel.is_set():
+                    stop = RunCancelled()
+            fill()
+    queue["papers"].sort(key=lambda p: p["pid"])
+    if stop is not None:
+        raise stop
 
 
 # ----------------------------------------------------------------------------- apply (after approval)
@@ -663,14 +828,15 @@ def regrade(queue: dict, pids: list[str], api_key: str, note: str = "", question
         raise ValueError("This run has no stored rubric. Paste the rubric before re-grading.")
     target = queue.get("target", "quiz")
     system = quiz_system_prompt(queue["course"], queue["section"], queue.get("quiz") or 1, rubric, set(roster),
-                                target)
+                                target, fb_ok)
+    tool = grade_tool(fb_ok)
     extra = ["This paper is being RE-GRADED at the instructor's request. Grade it carefully and independently."]
     if question.strip():
         extra.append(f"Focus on: {question.strip()}. Re-check that part in detail; keep the points of the other "
                      f"parts unless they are clearly wrong.")
     if note.strip():
         extra.append(f"Instructor note: {note.strip()}")
-    extra.append("Output ONLY raw JSON matching the template.")
+    extra.append("Call submit_grade with the result.")
     by = {p["pid"]: p for p in queue["papers"]}
     done, errors = [], []
     for i, pid in enumerate(pids, start=1):
@@ -682,13 +848,7 @@ def regrade(queue: dict, pids: list[str], api_key: str, note: str = "", question
         old = {k: p.get(k) for k in ("student_id", "score", "feedback", "breakdown", "score_confidence",
                                      "id_confidence", "issues")}
         try:
-            resp = client.create(
-                max_tokens=1500,
-                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-                messages=[{"role": "user", "content": [
-                    {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64}},
-                    {"type": "text", "text": "\n".join(extra)}]}])
-            res = _parse_json(_text(resp))
+            res = grade_call(client, system, tool, b64, "\n".join(extra))
             sid, how = match_to_roster(res.get("student_id", ""), set(roster))
             if p.get("id_match") == "manual" and p.get("student_id"):
                 sid, how = p["student_id"], "manual"          # keep an ID the instructor assigned by hand
@@ -752,10 +912,14 @@ def _run_context(queue: dict, course: dict) -> dict:
                if not p.get("excluded") and p.get("student_id") in roster}
     secs = sections_of(queue["section"])
     section_ids = {sid for sid, r in roster.items() if r["section"] in secs}
-    seen = present | set(results)
-    visitors = {sid for sid in seen if sid in roster and sid not in section_ids}
     # attendance already on file for this week (workbook + database), read before anything is written
     marks = az.attendance_marks(course, az.prepare_db(dbio.read_records()))
+    if not processed:
+        # no attendance sheet in this run (e.g. a second quiz in the same session): use the attendance already
+        # recorded for this week, so present students without a paper get 0 and absent students get 0
+        present = {sid for sid in section_ids if marks.get((sid, week)) == "+"}
+    seen = present | set(results)
+    visitors = {sid for sid in seen if sid in roster and sid not in section_ids}
 
     def is_absent(sid):
         if sid in results or sid in present or sid not in section_ids:

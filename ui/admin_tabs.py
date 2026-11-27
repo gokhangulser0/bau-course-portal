@@ -140,11 +140,14 @@ def billing_tab(cfg):
         tcap = t3.number_input("Per-run token cap (0 = none):", 0, 100_000_000, int(s["run_token_cap"]), 100_000)
         lowc = t4.number_input("Flag papers below model confidence:", 0.0, 1.0, float(s["low_confidence"]), 0.05)
         models = list(billing.MODELS)
-        model = st.selectbox("Default model:", models, index=models.index(s["model"]) if s["model"] in models else 0,
+        m1, m2 = st.columns([3, 1])
+        model = m1.selectbox("Default model:", models, index=models.index(s["model"]) if s["model"] in models else 0,
                              format_func=lambda m: f"{billing.MODELS[m]['label']} ({m})")
+        par = m2.number_input("Papers graded at the same time:", 1, 8, int(s.get("parallel_papers") or 4), 1,
+                              help="Higher is faster. Lower it to 1-2 if runs report rate-limit (429) errors.")
         if st.form_submit_button("Save thresholds"):
             s.update({"warn_pct_of_balance": warn, "run_cost_cap_usd": cap, "run_token_cap": int(tcap),
-                      "low_confidence": lowc, "model": model})
+                      "low_confidence": lowc, "model": model, "parallel_papers": int(par)})
             billing.save_ledger(led)
             st.rerun()
 

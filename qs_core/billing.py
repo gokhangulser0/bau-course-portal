@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import math
 import os
+import threading
 from dataclasses import dataclass, field
 
 from .common import LEDGER_FILE, now_iso, read_json, write_json
@@ -44,6 +45,7 @@ DEFAULT_SETTINGS = {
     "run_token_cap": 3_000_000,       # warn before / stop during a run (input + output + cache tokens)
     "low_confidence": 0.75,           # papers below this model confidence are flagged
     "est_output_tokens_quiz": 420,
+    "parallel_papers": 4,             # papers graded at the same time (1 = one after another)
     "est_output_tokens_attendance": 320,
     "price_overrides": {},
 }
@@ -292,6 +294,9 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+_TRACK_LOCK = threading.Lock()
+
+
 @dataclass
 class UsageTracker:
     model: str
@@ -308,6 +313,10 @@ class UsageTracker:
         return self.input_tokens + self.output_tokens + self.cache_read + self.cache_write
 
     def add(self, response) -> float:
+        with _TRACK_LOCK:                 # called from parallel grading threads
+            return self._add(response)
+
+    def _add(self, response) -> float:
         u = getattr(response, "usage", None)
         if u is None:
             return 0.0
