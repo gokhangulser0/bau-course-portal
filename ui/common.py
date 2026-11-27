@@ -135,8 +135,10 @@ def mtime(rel: str) -> float:
 
 
 # ----------------------------------------------------------------------------- cached loaders
+# The file's modification time is a normal parameter (no leading underscore): Streamlit leaves parameters that
+# start with "_" out of the cache key, and then a changed file would only show after the TTL expired.
 @st.cache_data(ttl=300, show_spinner=False)
-def _load_config(_m):
+def _load_config(m):
     return cfgmod.load()
 
 
@@ -159,7 +161,7 @@ def database():
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _load_roster_sheet(_m):
+def _load_roster_sheet(m):
     from qs_core import dbio
     return dbio.read_roster(path(DB_FILE))
 
@@ -170,7 +172,7 @@ def roster_sheet() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _load_table(name, _m):
+def _load_table(name, m):
     return xio.read_table(name)
 
 
@@ -183,7 +185,7 @@ def course_tables(course: dict) -> dict:
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _load_ann(_m):
+def _load_ann(m):
     return ann.load()
 
 
