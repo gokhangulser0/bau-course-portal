@@ -427,6 +427,8 @@ def apply_roster(course: dict, roster: pd.DataFrame, remove_dropped: bool = Fals
                 if sid in rows and xio.SECTION_HEADER in hm:
                     all_ws.cell(rows[sid], hm[xio.SECTION_HEADER]).value = mv["to"]
             xio.relink_all_sections(wb)
+            if kind == "component":
+                xio.link_sections_to_all(wb)  # new or moved students: their section cells show All Sections
 
         # Name corrections
         if renames:

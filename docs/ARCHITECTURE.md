@@ -260,3 +260,17 @@ write a text report before the JSON, a 17-item breakdown, sequential calls, runs
 * **Where a quiz was held** (absent zeros): from graded records only, by the section the student attended.
 * **Student View order:** several quizzes in one week, and the items of a criterion (HW, Exp, ...), are listed
   with the highest number first.
+
+## 16. Scores are typed in "All Sections" (28 Nov 2026)
+
+Component workbooks (Homework, Midterm, Final, Project, Experiment): **All Sections holds the values** and is
+where scores are typed by hand. Every score cell of a section sheet is a formula that shows the student's value
+from All Sections, matched by Student ID (`excel_io.link_sections_to_all`):
+`=IFERROR(IF(INDEX('All Sections'!$E:$E,MATCH($A2,'All Sections'!$A:$A,0))="","",INDEX(...)),"")`.
+* `build_workbook` links new component workbooks; roster sync relinks after students are added or moved.
+* Writers (grading, Grade Revision) skip these formula cells and write to All Sections; `read_table` reads the
+  section sheet first and falls back to All Sections, so files saved by a script (no cached formula values)
+  read correctly. `fullCalcOnLoad` makes Excel recalculate the links on open.
+* Quiz (`<COURSE>_grades.xlsx`) and attendance workbooks are filled by the system and are not linked.
+* 28 Nov 2026: `MCH2008_homework.xlsx` and `MCH2008_finals.xlsx` were linked; `MCH2008_midterm.xlsx` (section
+  sheets had HW headers, All Sections had only ID + Midterm) was rebuilt from the template with all 81 scores.

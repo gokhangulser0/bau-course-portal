@@ -352,6 +352,8 @@ def build_workbook(dest: str, kind: str, course: dict, students: list[dict], com
                      course["weeks"])
     for ws in old:
         wb.remove(ws)
+    if kind == "component":
+        link_sections_to_all(wb)              # scores are typed in All Sections; section sheets follow
     wb.save(dest_abs)
     return dest_abs
 
@@ -509,6 +511,92 @@ def relink_all_sections(wb) -> int:
                 cell.value = nv
                 changed += 1
     return changed
+
+
+# ----------------------------------------------------------------------------- All Sections -> section sheets
+_LINK_MARK = "IFERROR(IF(INDEX('All Sections'!"
+
+
+def is_link_formula(v) -> bool:
+    return isinstance(v, str) and v.startswith("=") and _LINK_MARK in v
+
+
+def _link_formula(all_col: str, all_id_col: str, sec_id_col: str, row: int) -> str:
+    ref = (f"INDEX('{ALL_SECTIONS}'!${all_col}:${all_col},"
+           f"MATCH(${sec_id_col}{row},'{ALL_SECTIONS}'!${all_id_col}:${all_id_col},0))")
+    return f'=IFERROR(IF({ref}="","",{ref}),"")'
+
+
+def link_sections_to_all(wb, columns=None) -> int:
+    """Make "All Sections" the sheet where scores are typed: every score cell of a section sheet becomes a
+    formula that shows the student's value from All Sections (matched by Student ID, so row order does not
+    matter). Values already typed in a section sheet are moved to All Sections first, and old All Sections
+    formulas that pointed the other way are replaced by values. Fixed columns (ID, name, section,
+    department) are not linked. Only the cell values change; formatting stays as it is.
+    Returns the number of section cells that got a link formula."""
+    if ALL_SECTIONS not in wb.sheetnames:
+        return 0
+    aw = wb[ALL_SECTIONS]
+    ahm = header_map(aw)
+    if ID_HEADER not in ahm:
+        return 0
+    fixed = {ID_HEADER, NAME_HEADER, DEPT_HEADER, SECTION_HEADER}
+    arows = id_rows(aw, ahm[ID_HEADER])
+    changed = 0
+    for ws in wb.worksheets:
+        if not is_section_sheet(ws.title):
+            continue
+        hm = header_map(ws)
+        if ID_HEADER not in hm:
+            continue
+        cols = [h for h in hm if h in ahm and h not in fixed and classify(h) not in FIXED_KINDS
+                and (columns is None or h in columns)]
+        if not cols:
+            continue
+        for sid, r in id_rows(ws, hm[ID_HEADER]).items():
+            if sid not in arows:              # every student needs an All Sections row to type into
+                vals = {ID_HEADER: sid, SECTION_HEADER: ws.title.strip()}
+                for h in (NAME_HEADER, DEPT_HEADER):
+                    if h in hm:
+                        vals[h] = ws.cell(r, hm[h]).value
+                append_student(aw, vals)
+                arows = id_rows(aw, ahm[ID_HEADER])
+            ar = arows[sid]
+            for h in cols:
+                sc, ac = ws.cell(r, hm[h]), aw.cell(ar, ahm[h])
+                if isinstance(sc, MergedCell) or isinstance(ac, MergedCell):
+                    continue
+                sv, av = sc.value, ac.value
+                s_val = None if (isinstance(sv, str) and sv.startswith("=")) else sv
+                a_val = None if (isinstance(av, str) and av.startswith("=")) else av
+                value = s_val if not is_blank(s_val) else (a_val if not is_blank(a_val) else None)
+                if av != value:
+                    ac.value = value
+                f = _link_formula(get_column_letter(ahm[h]), get_column_letter(ahm[ID_HEADER]),
+                                  get_column_letter(hm[ID_HEADER]), r)
+                if sv != f:
+                    sc.value = f
+                    changed += 1
+    try:
+        wb.calculation.fullCalcOnLoad = True  # Excel recalculates the links when the file is opened
+    except AttributeError:
+        pass
+    return changed
+
+
+def link_workbook(file_rel: str, term: str | None = None, course: str | None = None) -> int:
+    """link_sections_to_all for a workbook on disk (open-Excel check and stamped backup first)."""
+    p = file_rel if os.path.isabs(file_rel) else path(file_rel)
+    if not os.path.exists(p):
+        return 0
+    ensure_writable(p)
+    wb = openpyxl.load_workbook(p)
+    if ALL_SECTIONS not in wb.sheetnames:
+        return 0
+    bk.backup_file(p, term=term, course=course)
+    n = link_sections_to_all(wb)
+    wb.save(p)
+    return n
 
 
 # ----------------------------------------------------------------------------- value writes
